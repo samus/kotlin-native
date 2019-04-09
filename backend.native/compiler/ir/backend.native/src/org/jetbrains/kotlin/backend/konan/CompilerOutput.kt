@@ -31,6 +31,9 @@ internal fun produceCStubs(context: Context) {
     }
 }
 
+private fun shouldUseLlvmApi(context: Context): Boolean =
+        (context.config.target.family == Family.IOS || context.config.target.family == Family.OSX)
+
 private fun linkAllDependecies(context: Context, generatedBitcodeFiles: List<String>) {
 
     val nativeLibraries = context.config.nativeLibraries + context.config.defaultNativeLibraries
@@ -42,19 +45,6 @@ private fun linkAllDependecies(context: Context, generatedBitcodeFiles: List<Str
     bitcodeFiles.forEach {
         parseAndLinkBitcodeFile(llvmModule, it)
     }
-}
-
-private fun shouldOptimizeWithLlvmApi(context: Context) =
-        (context.config.target.family == Family.IOS || context.config.target.family == Family.OSX)
-
-private fun shoudRunClosedWorldCleanUp(context: Context) =
-        // GlobalDCE will kill coverage-related globals.
-        !context.coverage.enabled
-
-private fun runLlvmPipeline(context: Context) = when {
-    shouldOptimizeWithLlvmApi(context) -> runLlvmOptimizationPipeline(context)
-    shoudRunClosedWorldCleanUp(context) -> runClosedWorldCleanup(context)
-    else -> {}
 }
 
 internal fun produceOutput(context: Context) {
@@ -70,6 +60,7 @@ internal fun produceOutput(context: Context) {
         CompilerOutputKind.PROGRAM -> {
             val output = tempFiles.nativeBinaryFileName
             context.bitcodeFileName = output
+
             val generatedBitcodeFiles =
                 if (produce == CompilerOutputKind.DYNAMIC || produce == CompilerOutputKind.STATIC) {
                     produceCAdapterBitcode(
@@ -78,11 +69,15 @@ internal fun produceOutput(context: Context) {
                         tempFiles.cAdapterBitcodeName)
                     listOf(tempFiles.cAdapterBitcodeName)
                 } else emptyList()
+
+            linkAllDependecies(context, generatedBitcodeFiles)
+
             if (produce == CompilerOutputKind.FRAMEWORK && context.config.produceStaticFramework) {
                 embedAppleLinkerOptionsToBitcode(context.llvm, context.config)
             }
-            linkAllDependecies(context, generatedBitcodeFiles)
-            runLlvmPipeline(context)
+            if (shouldUseLlvmApi(context)) {
+                runLlvmOptimizationPipeline(context)
+            }
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
         CompilerOutputKind.LIBRARY -> {
@@ -96,6 +91,7 @@ internal fun produceOutput(context: Context) {
             val target = context.config.target
             val nopack = config.getBoolean(KonanConfigKeys.NOPACK)
             val manifestProperties = context.config.manifestProperties
+
 
             val library = buildLibrary(
                 context.config.nativeLibraries,
@@ -111,6 +107,7 @@ internal fun produceOutput(context: Context) {
                 manifestProperties,
                 context.dataFlowGraph)
 
+            context.library = library
             context.bitcodeFileName = library.mainBitcodeFileName
         }
         CompilerOutputKind.BITCODE -> {
@@ -118,14 +115,6 @@ internal fun produceOutput(context: Context) {
             context.bitcodeFileName = output
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
-    }
-}
-
-private fun parseAndLinkBitcodeFile(llvmModule: LLVMModuleRef, path: String) {
-    val parsedModule = parseBitcodeFile(path)
-    val failed = LLVMLinkModules2(llvmModule, parsedModule)
-    if (failed != 0) {
-        throw Error("failed to link $path") // TODO: retrieve error message from LLVM.
     }
 }
 
@@ -148,4 +137,12 @@ private fun embedAppleLinkerOptionsToBitcode(llvm: Llvm, config: KonanConfig) {
             llvm.nativeDependenciesToLink.flatMap { findEmbeddableOptions(it.linkerOpts) }
 
     embedLlvmLinkOptions(llvm.llvmModule, optionsToEmbed)
+}
+
+private fun parseAndLinkBitcodeFile(llvmModule: LLVMModuleRef, path: String) {
+    val parsedModule = parseBitcodeFile(path)
+    val failed = LLVMLinkModules2(llvmModule, parsedModule)
+    if (failed != 0) {
+        throw Error("failed to link $path") // TODO: retrieve error message from LLVM.
+    }
 }

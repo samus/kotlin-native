@@ -144,19 +144,18 @@ open class FrameworkTest : DefaultTask() {
         if (!fullBitcode) {
             return
         }
-        val testTarget = project.testTarget()
-        val configurables = project.platformManager().platform(testTarget).configurables as AppleConfigurables
+        // TODO: better way to detect utility?
+        val bitcodeBuildTool = "/Applications/Xcode.app/Contents/Developer/usr/bin/bitcode-build-tool"
+        val ldPath = "${Xcode.current.toolchain}/usr/bin/ld"
 
-        val bitcodeBuildTool = "${configurables.absoluteAdditionalToolsDir}/bin/bitcode-build-tool"
-        val ldPath = "${configurables.absoluteTargetToolchain}/usr/bin/ld"
-        val sdk = when (testTarget) {
+        val sdk = when (val testTarget = project.testTarget()) {
             KonanTarget.IOS_X64 -> Xcode.current.iphonesimulatorSdk
-            KonanTarget.IOS_ARM64, KonanTarget.IOS_ARM32 -> Xcode.current.iphoneosSdk
+            KonanTarget.IOS_ARM64 -> Xcode.current.iphoneosSdk
             KonanTarget.MACOS_X64 -> Xcode.current.macosxSdk
             else -> error("Cannot validate bitcode for test target $testTarget")
         }
 
-        val args = listOf("--sdk", sdk, "-v", "-t", ldPath, frameworkBinary)
+        val args = listOf("--verify", "--sdk", sdk, "-v", "-t", ldPath, frameworkBinary)
         val (stdOut, stdErr, exitCode) = runProcess(executor = localExecutor(project), executable = bitcodeBuildTool, args = args)
         check(exitCode == 0) {
             """
