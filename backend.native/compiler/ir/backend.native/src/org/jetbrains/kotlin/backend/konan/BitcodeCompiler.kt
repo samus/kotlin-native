@@ -182,7 +182,9 @@ internal class BitcodeCompiler(val context: Context) {
                 else -> clangFlags.clangNooptFlags
             })
             addNonEmpty(BitcodeEmbedding.getClangOptions(context.config))
-            addNonEmpty(clangFlags.clangDynamicFlags)
+            if (determineLinkerOutput(context) == LinkerOutputKind.DYNAMIC_LIBRARY) {
+                addNonEmpty(clangFlags.clangDynamicFlags)
+            }
         }
         targetTool("clang++", *flags.toTypedArray(), file, "-o", objectFile)
         return objectFile
