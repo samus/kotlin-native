@@ -71,6 +71,9 @@ ext.testLibraryDir = "${project.property("konan.home")}/klib/platform/${project.
 // Add executor to run tests depending on a target
 project.convention.plugins.executor = ExecutorServiceKt.create(project)
 
+// Do not generate run tasks for konan built artifacts
+ext.konanNoRun = true
+
 allprojects {
     // Root directories for test output (logs, compiled files, statistics etc). Only single path must be in each set.
     // backend.native/tests
@@ -166,7 +169,7 @@ TaskCollection<KonanTest> tasksOf(Closure<Boolean> filter) {
             .matching { filter(it) && it.enabled && (prefix != null ? it.name.startsWith(prefix) : true) }
 }
 
-task executeTests {
+run {
     dependsOn(tasksOf { it instanceof KonanLocalTest ||
             it instanceof KonanStandaloneTest // includes driver, interop and library tests
     })
