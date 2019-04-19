@@ -12,6 +12,7 @@ import org.jetbrains.kotlin.backend.konan.llvm.parseBitcodeFile
 import org.jetbrains.kotlin.konan.CURRENT
 import org.jetbrains.kotlin.konan.KonanAbiVersion
 import org.jetbrains.kotlin.konan.KonanVersion
+import org.jetbrains.kotlin.konan.file.isBitcode
 import org.jetbrains.kotlin.konan.library.KonanLibraryVersioning
 import org.jetbrains.kotlin.konan.target.CompilerOutputKind
 import org.jetbrains.kotlin.konan.target.Family
@@ -64,7 +65,7 @@ internal fun produceOutput(context: Context) {
             if (produce == CompilerOutputKind.FRAMEWORK && context.config.produceStaticFramework) {
                 embedAppleLinkerOptionsToBitcode(context.llvm, context.config)
             }
-
+            runLlvmOptimizationPipeline(context)
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
         CompilerOutputKind.LIBRARY -> {
@@ -132,4 +133,38 @@ private fun embedAppleLinkerOptionsToBitcode(llvm: Llvm, config: KonanConfig) {
             llvm.nativeDependenciesToLink.flatMap { findEmbeddableOptions(it.linkerOpts) }
 
     embedLlvmLinkOptions(llvm.llvmModule, optionsToEmbed)
+}
+
+internal fun runLlvmOptimizationPipeline(context: Context) {
+    if ((context.config.target.family != Family.IOS && context.config.target.family != Family.OSX)) {
+        return
+    }
+
+    val llvmModule = context.llvmModule!!
+    val bitcodeLibraries = context.llvm.bitcodeToLink
+    val additionalBitcodeFilesToLink = context.llvm.additionalProducedBitcodeFiles
+    val bitcodeFiles = additionalBitcodeFilesToLink +
+            bitcodeLibraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
+    bitcodeFiles.forEach {
+        parseAndLinkBitcodeFile(llvmModule, it)
+    }
+
+    val passBuilder = LLVMPassManagerBuilderCreate()
+    val modulePasses = LLVMCreatePassManager()
+
+    val optLevel = when {
+        context.shouldOptimize() -> 3
+        context.shouldContainDebugInfo() -> 0
+        else -> 1
+    }
+
+    LLVMPassManagerBuilderSetOptLevel(passBuilder, optLevel)
+    LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
+    LLVMAddInternalizePass(modulePasses, 0)
+    LLVMAddGlobalDCEPass(modulePasses)
+    LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
+    LLVMPassManagerBuilderDispose(passBuilder)
+
+    LLVMRunPassManager(modulePasses, llvmModule)
+    LLVMDisposePassManager(modulePasses)
 }

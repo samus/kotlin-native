@@ -210,7 +210,7 @@ internal class BitcodeCompiler(val context: Context) {
                 bitcodeLibraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
         return listOf(when (platform.configurables) {
             is AppleConfigurables ->
-                clang(opt(llvmLink(bitcodeFiles)))
+                clang(bitcodeFile)
             is WasmConfigurables ->
                 bitcodeToWasm(bitcodeFiles)
             is ZephyrConfigurables ->
