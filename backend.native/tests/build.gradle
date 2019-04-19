@@ -3168,6 +3168,10 @@ kotlinNativeInterop {
             linkerOpts "-L$buildDir",  "-lobjcsmoke"
         }
     }
+
+    withSpaces {
+        defFile generateWithSpaceDefFile()
+    }
 }
 
 /**
@@ -3317,30 +3321,15 @@ interopTest("interop_callbacksAndVarargs") {
     interop = 'ccallbacksAndVarargs'
 }
 
-// TODO: merge with new tests infrastructure.
-// Now after clean without calling dist task get error 'Classpath of the tool is empty: cinterop'
-/*task interop_withSpaces() {
-    if (project.testTarget != 'wasm32') {
-        if (!project.ext.useCustomDist) {
-            dependsOn ':dist'
-        }
-        dependsOn 'build'
-        konanArtifacts {
-            interop('withSpacesInterop') {
-                defFile generateWithSpaceDefFile()
-            }
-            program("withSpaces") {
-                srcDir "interop/basics/withSpaces.kt"
-                libraries {
-                    artifact 'withSpacesInterop'
-                }
-            }
-        }
-        doLast {
-            assert file("${buildDir}/cutom map.map").exists()
-        }
+interopTest("interop_withSpaces") {
+    disabled = (project.testTarget == 'wasm32') // No interop for wasm yet.
+    interop ='withSpaces'
+    source = "interop/basics/withSpaces.kt"
+
+    doLast {
+        assert file("${buildDir}/cutom map.map").exists()
     }
-}*/
+}
 
 /*
 TODO: This test isn't run automatically
