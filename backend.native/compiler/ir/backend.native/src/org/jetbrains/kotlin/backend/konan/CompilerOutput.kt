@@ -4,6 +4,7 @@
  */
 package org.jetbrains.kotlin.backend.konan
 
+import kotlinx.cinterop.*
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.library.impl.buildLibrary
 import org.jetbrains.kotlin.backend.konan.llvm.Llvm
@@ -14,6 +15,7 @@ import org.jetbrains.kotlin.konan.KonanAbiVersion
 import org.jetbrains.kotlin.konan.KonanVersion
 import org.jetbrains.kotlin.konan.file.isBitcode
 import org.jetbrains.kotlin.konan.library.KonanLibraryVersioning
+import org.jetbrains.kotlin.konan.target.Architecture
 import org.jetbrains.kotlin.konan.target.CompilerOutputKind
 import org.jetbrains.kotlin.konan.target.Family
 
@@ -145,12 +147,10 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
     val additionalBitcodeFilesToLink = context.llvm.additionalProducedBitcodeFiles
     val bitcodeFiles = additionalBitcodeFilesToLink +
             bitcodeLibraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
+
     bitcodeFiles.forEach {
         parseAndLinkBitcodeFile(llvmModule, it)
     }
-
-    val passBuilder = LLVMPassManagerBuilderCreate()
-    val modulePasses = LLVMCreatePassManager()
 
     val optLevel = when {
         context.shouldOptimize() -> 3
@@ -158,13 +158,42 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
         else -> 1
     }
 
-    LLVMPassManagerBuilderSetOptLevel(passBuilder, optLevel)
-    LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
-    LLVMAddInternalizePass(modulePasses, 0)
-    LLVMAddGlobalDCEPass(modulePasses)
-    LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
-    LLVMPassManagerBuilderDispose(passBuilder)
+    LLVMKotlinInitialize()
 
-    LLVMRunPassManager(modulePasses, llvmModule)
-    LLVMDisposePassManager(modulePasses)
+    memScoped {
+        val passBuilder = LLVMPassManagerBuilderCreate()
+        val modulePasses = LLVMCreatePassManager()
+
+        LLVMPassManagerBuilderSetOptLevel(passBuilder, optLevel)
+        LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
+        val targetTriple = context.llvm.targetTriple
+
+        val cpuArchitecture = when (context.config.target.architecture) {
+            Architecture.X64 -> "x86-64"
+            Architecture.ARM32 -> "armv7"
+            Architecture.ARM64 -> "arm64"
+            else -> error("Unsupported architecture")
+        }
+
+        val target = alloc<LLVMTargetRefVar>()
+        if (LLVMGetTargetFromTriple(targetTriple, target.ptr, null) != 0) {
+            context.reportCompilationError("Cannot get target from triple $targetTriple.")
+        }
+
+        val targetMachine = LLVMCreateTargetMachine(
+                target.value, targetTriple, cpuArchitecture, "",
+                LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
+                LLVMRelocMode.LLVMRelocDefault,
+                LLVMCodeModel.LLVMCodeModelDefault)
+        LLVMAddAnalysisPasses(targetMachine, modulePasses)
+        LLVMAddInternalizePass(modulePasses, 0)
+        LLVMAddGlobalDCEPass(modulePasses)
+        LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
+        LLVMPassManagerBuilderDispose(passBuilder)
+
+        LLVMRunPassManager(modulePasses, llvmModule)
+
+        LLVMDisposePassManager(modulePasses)
+        LLVMDisposeTargetMachine(targetMachine)
+    }
 }
