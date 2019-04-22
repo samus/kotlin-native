@@ -195,5 +195,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
 
         LLVMDisposePassManager(modulePasses)
         LLVMDisposeTargetMachine(targetMachine)
+
+        runLateBitcodePasses(context, llvmModule)
     }
 }
