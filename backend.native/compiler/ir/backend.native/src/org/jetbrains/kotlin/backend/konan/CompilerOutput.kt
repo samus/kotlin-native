@@ -158,6 +158,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
         else -> 1
     }
 
+    // Initialize all required LLVM machinery, ex. target registry.
     LLVMKotlinInitialize()
 
     memScoped {
@@ -195,7 +196,17 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
 
         LLVMDisposePassManager(modulePasses)
         LLVMDisposeTargetMachine(targetMachine)
-
-        runLateBitcodePasses(context, llvmModule)
     }
+
+    runLateBitcodePasses(context, llvmModule)
+}
+
+
+internal fun runLateBitcodePasses(context: Context, llvmModule: LLVMModuleRef) {
+    val passManager = LLVMCreatePassManager()!!
+    val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
+    LLVMAddTargetLibraryInfo(targetLibraryInfo, passManager)
+    context.coverage.addLateLlvmPasses(passManager)
+    LLVMRunPassManager(passManager, llvmModule)
+    LLVMDisposePassManager(passManager)
 }

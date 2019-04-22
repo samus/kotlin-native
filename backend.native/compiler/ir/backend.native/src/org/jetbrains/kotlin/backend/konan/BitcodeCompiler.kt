@@ -26,15 +26,6 @@ internal fun shouldRunLateBitcodePasses(context: Context): Boolean {
     return context.coverage.enabled
 }
 
-internal fun runLateBitcodePasses(context: Context, llvmModule: LLVMModuleRef) {
-    val passManager = LLVMCreatePassManager()!!
-    val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
-    LLVMAddTargetLibraryInfo(targetLibraryInfo, passManager)
-    context.coverage.addLateLlvmPasses(passManager)
-    LLVMRunPassManager(passManager, llvmModule)
-    LLVMDisposePassManager(passManager)
-}
-
 internal fun determineLinkerOutput(context: Context): LinkerOutputKind =
     when (context.config.produce) {
         CompilerOutputKind.FRAMEWORK -> {
