@@ -161,6 +161,21 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
     // Initialize all required LLVM machinery, ex. target registry.
     LLVMKotlinInitialize()
 
+    val passRegistry = LLVMGetGlobalPassRegistry()
+
+    LLVMInitializeCore(passRegistry)
+    LLVMInitializeTransformUtils(passRegistry)
+    LLVMInitializeScalarOpts(passRegistry)
+    LLVMInitializeObjCARCOpts(passRegistry)
+    LLVMInitializeVectorization(passRegistry)
+    LLVMInitializeInstCombine(passRegistry)
+    LLVMInitializeIPO(passRegistry)
+    LLVMInitializeInstrumentation(passRegistry)
+    LLVMInitializeAnalysis(passRegistry)
+    LLVMInitializeIPA(passRegistry)
+    LLVMInitializeCodeGen(passRegistry)
+    LLVMInitializeTarget(passRegistry)
+
     memScoped {
         val passBuilder = LLVMPassManagerBuilderCreate()
         val modulePasses = LLVMCreatePassManager()
