@@ -8,35 +8,18 @@ package org.jetbrains.kotlin.backend.konan
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.llvm.parseBitcodeFile
 import org.jetbrains.kotlin.konan.exec.Command
-import org.jetbrains.kotlin.konan.file.isBitcode
 import org.jetbrains.kotlin.konan.target.*
 
 typealias BitcodeFile = String
 typealias ObjectFile = String
 typealias ExecutableFile = String
 
-internal fun mangleSymbol(target: KonanTarget,symbol: String) =
+private fun mangleSymbol(target: KonanTarget,symbol: String) =
         if (target.family == Family.IOS || target.family == Family.OSX) {
             "_$symbol"
         } else {
             symbol
         }
-
-internal fun shouldRunLateBitcodePasses(context: Context): Boolean {
-    return context.coverage.enabled
-}
-
-internal fun determineLinkerOutput(context: Context): LinkerOutputKind =
-    when (context.config.produce) {
-        CompilerOutputKind.FRAMEWORK -> {
-            val staticFramework = context.config.produceStaticFramework
-            if (staticFramework) LinkerOutputKind.STATIC_LIBRARY else LinkerOutputKind.DYNAMIC_LIBRARY
-        }
-        CompilerOutputKind.DYNAMIC -> LinkerOutputKind.DYNAMIC_LIBRARY
-        CompilerOutputKind.STATIC -> LinkerOutputKind.STATIC_LIBRARY
-        CompilerOutputKind.PROGRAM -> LinkerOutputKind.EXECUTABLE
-        else -> TODO("${context.config.produce} should not reach native linker stage")
-    }
 
 internal class BitcodeCompiler(val context: Context) {
 
@@ -195,10 +178,9 @@ internal class BitcodeCompiler(val context: Context) {
     }
 
     fun makeObjectFiles(bitcodeFile: BitcodeFile): List<ObjectFile> {
-        val bitcodeLibraries = context.llvm.bitcodeToLink
-        val additionalBitcodeFilesToLink = context.llvm.additionalProducedBitcodeFiles
-        val bitcodeFiles = listOf(bitcodeFile) + additionalBitcodeFilesToLink +
-                bitcodeLibraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
+
+        val bitcodeFiles = listOf(bitcodeFile)
+
         return listOf(when (platform.configurables) {
             is AppleConfigurables ->
                 clang(bitcodeFile)

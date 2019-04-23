@@ -4,18 +4,17 @@
  */
 package org.jetbrains.kotlin.backend.konan
 
-import kotlinx.cinterop.*
-import llvm.*
+import llvm.LLVMLinkModules2
+import llvm.LLVMModuleRef
+import llvm.LLVMWriteBitcodeToFile
 import org.jetbrains.kotlin.backend.konan.library.impl.buildLibrary
+import org.jetbrains.kotlin.backend.konan.llvm.*
 import org.jetbrains.kotlin.backend.konan.llvm.Llvm
-import org.jetbrains.kotlin.backend.konan.llvm.embedLlvmLinkOptions
-import org.jetbrains.kotlin.backend.konan.llvm.parseBitcodeFile
 import org.jetbrains.kotlin.konan.CURRENT
 import org.jetbrains.kotlin.konan.KonanAbiVersion
 import org.jetbrains.kotlin.konan.KonanVersion
 import org.jetbrains.kotlin.konan.file.isBitcode
 import org.jetbrains.kotlin.konan.library.KonanLibraryVersioning
-import org.jetbrains.kotlin.konan.target.Architecture
 import org.jetbrains.kotlin.konan.target.CompilerOutputKind
 import org.jetbrains.kotlin.konan.target.Family
 
@@ -29,6 +28,22 @@ internal fun produceCStubs(context: Context) {
     val llvmModule = context.llvmModule!!
     context.cStubsManager.compile(context.config.clang, context.messageCollector, context.inVerbosePhase)?.let {
         parseAndLinkBitcodeFile(llvmModule, it.absolutePath)
+    }
+}
+
+private fun shouldUseLlvmApi(context: Context): Boolean =
+        (context.config.target.family != Family.IOS && context.config.target.family != Family.OSX)
+
+private fun linkAllDependecies(context: Context, generatedBitcodeFiles: List<String>) {
+
+    val nativeLibraries = context.config.nativeLibraries + context.config.defaultNativeLibraries
+    val bitcodeLibraries = context.llvm.bitcodeToLink.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
+    val additionalBitcodeFilesToLink = context.llvm.additionalProducedBitcodeFiles
+    val bitcodeFiles = (nativeLibraries + generatedBitcodeFiles + additionalBitcodeFilesToLink + bitcodeLibraries).toSet()
+
+    val llvmModule = context.llvmModule!!
+    bitcodeFiles.forEach {
+        parseAndLinkBitcodeFile(llvmModule, it)
     }
 }
 
@@ -55,19 +70,14 @@ internal fun produceOutput(context: Context) {
                     listOf(tempFiles.cAdapterBitcodeName)
                 } else emptyList()
 
-            val nativeLibraries =
-                context.config.nativeLibraries +
-                context.config.defaultNativeLibraries +
-                generatedBitcodeFiles
-
-            for (library in nativeLibraries) {
-                parseAndLinkBitcodeFile(context.llvmModule!!, library)
-            }
+            linkAllDependecies(context, generatedBitcodeFiles)
 
             if (produce == CompilerOutputKind.FRAMEWORK && context.config.produceStaticFramework) {
                 embedAppleLinkerOptionsToBitcode(context.llvm, context.config)
             }
-            runBitcodeOptimizationPipeline(context)
+            if (shouldUseLlvmApi(context)) {
+                runBitcodeOptimizationPipeline(context)
+            }
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
         CompilerOutputKind.LIBRARY -> {
@@ -108,14 +118,6 @@ internal fun produceOutput(context: Context) {
     }
 }
 
-private fun parseAndLinkBitcodeFile(llvmModule: LLVMModuleRef, path: String) {
-    val parsedModule = parseBitcodeFile(path)
-    val failed = LLVMLinkModules2(llvmModule, parsedModule)
-    if (failed != 0) {
-        throw Error("failed to link $path") // TODO: retrieve error message from LLVM.
-    }
-}
-
 private fun embedAppleLinkerOptionsToBitcode(llvm: Llvm, config: KonanConfig) {
     fun findEmbeddableOptions(options: List<String>): List<List<String>> {
         val result = mutableListOf<List<String>>()
@@ -137,94 +139,10 @@ private fun embedAppleLinkerOptionsToBitcode(llvm: Llvm, config: KonanConfig) {
     embedLlvmLinkOptions(llvm.llvmModule, optionsToEmbed)
 }
 
-internal fun runBitcodeOptimizationPipeline(context: Context) {
-    if ((context.config.target.family != Family.IOS && context.config.target.family != Family.OSX)) {
-        return
+private fun parseAndLinkBitcodeFile(llvmModule: LLVMModuleRef, path: String) {
+    val parsedModule = parseBitcodeFile(path)
+    val failed = LLVMLinkModules2(llvmModule, parsedModule)
+    if (failed != 0) {
+        throw Error("failed to link $path") // TODO: retrieve error message from LLVM.
     }
-
-    val llvmModule = context.llvmModule!!
-    val bitcodeLibraries = context.llvm.bitcodeToLink
-    val additionalBitcodeFilesToLink = context.llvm.additionalProducedBitcodeFiles
-    val bitcodeFiles = additionalBitcodeFilesToLink +
-            bitcodeLibraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
-
-    bitcodeFiles.forEach {
-        parseAndLinkBitcodeFile(llvmModule, it)
-    }
-
-    val optLevel = when {
-        context.shouldOptimize() -> 2
-        context.shouldContainDebugInfo() -> 0
-        else -> 1
-    }
-
-    // Initialize all required LLVM machinery, ex. target registry.
-    LLVMKotlinInitialize()
-
-    val passRegistry = LLVMGetGlobalPassRegistry()
-
-    LLVMInitializeCore(passRegistry)
-    LLVMInitializeTransformUtils(passRegistry)
-    LLVMInitializeScalarOpts(passRegistry)
-    LLVMInitializeObjCARCOpts(passRegistry)
-    LLVMInitializeVectorization(passRegistry)
-    LLVMInitializeInstCombine(passRegistry)
-    LLVMInitializeIPO(passRegistry)
-    LLVMInitializeInstrumentation(passRegistry)
-    LLVMInitializeAnalysis(passRegistry)
-    LLVMInitializeIPA(passRegistry)
-    LLVMInitializeCodeGen(passRegistry)
-    LLVMInitializeTarget(passRegistry)
-
-    memScoped {
-        val passBuilder = LLVMPassManagerBuilderCreate()
-        val modulePasses = LLVMCreatePassManager()
-        LLVMPassManagerBuilderSetOptLevel(passBuilder, optLevel)
-        LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
-        val targetTriple = context.llvm.targetTriple
-
-        val cpuArchitecture = when (context.config.target.architecture) {
-            Architecture.X64 -> "core2"
-            Architecture.ARM32 -> "armv7"
-            Architecture.ARM64 -> "arm64"
-            else -> error("Unsupported architecture")
-        }
-
-        val target = alloc<LLVMTargetRefVar>()
-        if (LLVMGetTargetFromTriple(targetTriple, target.ptr, null) != 0) {
-            context.reportCompilationError("Cannot get target from triple $targetTriple.")
-        }
-
-        val targetMachine = LLVMCreateTargetMachine(
-                target.value, targetTriple, cpuArchitecture, "",
-                LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
-                LLVMRelocMode.LLVMRelocDefault,
-                LLVMCodeModel.LLVMCodeModelDefault)
-        val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
-        LLVMAddTargetLibraryInfo(targetLibraryInfo, modulePasses)
-        // TargetTransformInfo pass
-        LLVMAddAnalysisPasses(targetMachine, modulePasses)
-        LLVMAddInternalizePass(modulePasses, 0)
-        LLVMAddGlobalDCEPass(modulePasses)
-        LLVMPassManagerBuilderUseInlinerWithThreshold(passBuilder, 100)
-        LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
-        LLVMPassManagerBuilderDispose(passBuilder)
-
-        LLVMRunPassManager(modulePasses, llvmModule)
-
-        LLVMDisposePassManager(modulePasses)
-        LLVMDisposeTargetMachine(targetMachine)
-    }
-
-    runLateBitcodePasses(context, llvmModule)
-}
-
-
-internal fun runLateBitcodePasses(context: Context, llvmModule: LLVMModuleRef) {
-    val passManager = LLVMCreatePassManager()!!
-    val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
-    LLVMAddTargetLibraryInfo(targetLibraryInfo, passManager)
-    context.coverage.addLateLlvmPasses(passManager)
-    LLVMRunPassManager(passManager, llvmModule)
-    LLVMDisposePassManager(passManager)
 }

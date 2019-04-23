@@ -6,6 +6,18 @@ import org.jetbrains.kotlin.konan.target.CompilerOutputKind
 import org.jetbrains.kotlin.konan.target.Family
 import org.jetbrains.kotlin.konan.target.LinkerOutputKind
 
+internal fun determineLinkerOutput(context: Context): LinkerOutputKind =
+        when (context.config.produce) {
+            CompilerOutputKind.FRAMEWORK -> {
+                val staticFramework = context.config.produceStaticFramework
+                if (staticFramework) LinkerOutputKind.STATIC_LIBRARY else LinkerOutputKind.DYNAMIC_LIBRARY
+            }
+            CompilerOutputKind.DYNAMIC -> LinkerOutputKind.DYNAMIC_LIBRARY
+            CompilerOutputKind.STATIC -> LinkerOutputKind.STATIC_LIBRARY
+            CompilerOutputKind.PROGRAM -> LinkerOutputKind.EXECUTABLE
+            else -> TODO("${context.config.produce} should not reach native linker stage")
+        }
+
 // TODO: We have a Linker.kt file in the shared module.
 internal class Linker(val context: Context) {
 
