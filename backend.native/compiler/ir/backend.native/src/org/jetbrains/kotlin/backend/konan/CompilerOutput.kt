@@ -67,7 +67,7 @@ internal fun produceOutput(context: Context) {
             if (produce == CompilerOutputKind.FRAMEWORK && context.config.produceStaticFramework) {
                 embedAppleLinkerOptionsToBitcode(context.llvm, context.config)
             }
-            runLlvmOptimizationPipeline(context)
+            runBitcodeOptimizationPipeline(context)
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
         CompilerOutputKind.LIBRARY -> {
@@ -137,7 +137,7 @@ private fun embedAppleLinkerOptionsToBitcode(llvm: Llvm, config: KonanConfig) {
     embedLlvmLinkOptions(llvm.llvmModule, optionsToEmbed)
 }
 
-internal fun runLlvmOptimizationPipeline(context: Context) {
+internal fun runBitcodeOptimizationPipeline(context: Context) {
     if ((context.config.target.family != Family.IOS && context.config.target.family != Family.OSX)) {
         return
     }
@@ -153,7 +153,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
     }
 
     val optLevel = when {
-        context.shouldOptimize() -> 3
+        context.shouldOptimize() -> 2
         context.shouldContainDebugInfo() -> 0
         else -> 1
     }
@@ -206,6 +206,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
         LLVMAddAnalysisPasses(targetMachine, modulePasses)
         LLVMAddInternalizePass(modulePasses, 0)
         LLVMAddGlobalDCEPass(modulePasses)
+        LLVMPassManagerBuilderUseInlinerWithThreshold(passBuilder, 100)
         LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
         LLVMPassManagerBuilderDispose(passBuilder)
 
