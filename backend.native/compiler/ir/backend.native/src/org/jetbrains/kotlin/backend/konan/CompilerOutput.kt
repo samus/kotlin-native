@@ -179,13 +179,12 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
     memScoped {
         val passBuilder = LLVMPassManagerBuilderCreate()
         val modulePasses = LLVMCreatePassManager()
-
         LLVMPassManagerBuilderSetOptLevel(passBuilder, optLevel)
         LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
         val targetTriple = context.llvm.targetTriple
 
         val cpuArchitecture = when (context.config.target.architecture) {
-            Architecture.X64 -> "x86-64"
+            Architecture.X64 -> "core2"
             Architecture.ARM32 -> "armv7"
             Architecture.ARM64 -> "arm64"
             else -> error("Unsupported architecture")
@@ -201,6 +200,9 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
                 LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
                 LLVMRelocMode.LLVMRelocDefault,
                 LLVMCodeModel.LLVMCodeModelDefault)
+        val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
+        LLVMAddTargetLibraryInfo(targetLibraryInfo, modulePasses)
+        // TargetTransformInfo pass
         LLVMAddAnalysisPasses(targetMachine, modulePasses)
         LLVMAddInternalizePass(modulePasses, 0)
         LLVMAddGlobalDCEPass(modulePasses)
