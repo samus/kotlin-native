@@ -32,7 +32,7 @@ internal fun produceCStubs(context: Context) {
 }
 
 private fun shouldUseLlvmApi(context: Context): Boolean =
-        (context.config.target.family != Family.IOS && context.config.target.family != Family.OSX)
+        (context.config.target.family == Family.IOS || context.config.target.family == Family.OSX)
 
 private fun linkAllDependecies(context: Context, generatedBitcodeFiles: List<String>) {
 
