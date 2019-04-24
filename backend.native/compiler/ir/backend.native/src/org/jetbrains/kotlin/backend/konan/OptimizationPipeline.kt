@@ -40,66 +40,90 @@ internal fun runLateBitcodePasses(context: Context, llvmModule: LLVMModuleRef) {
     LLVMDisposePassManager(passManager)
 }
 
-private val KonanTarget.cpuArchitecture: String
-        get() = when (this) {
-            KonanTarget.IOS_ARM32 -> "armv7"
-            KonanTarget.IOS_ARM64 -> "arm64"
-            KonanTarget.LINUX_X64 -> "x86-64"
-            KonanTarget.MINGW_X86 -> "sandybridge"
-            KonanTarget.MACOS_X64 -> "core2"
-            KonanTarget.LINUX_ARM32_HFP -> "arm1136jf-s"
-            else -> error("There is no support for ${this.name} target yet")
-        }
+private class LlvmPipelineConfiguration(context: Context) {
 
-private val KonanTarget.cpuFeatures: String
-        get() = ""
+    private val target = context.config.target
 
-private fun getInlineThreshold(context: Context): Int? = when {
-    context.shouldOptimize() -> 100
-    context.shouldContainDebugInfo() -> null
-    else -> null
+    val targetTriple: String = context.llvm.targetTriple
+
+    val cpuArchitecture: String = when (target) {
+        KonanTarget.IOS_ARM32 -> "armv7"
+        KonanTarget.IOS_ARM64 -> "arm64"
+        KonanTarget.LINUX_X64 -> "x86-64"
+        KonanTarget.MINGW_X86 -> "sandybridge"
+        KonanTarget.MACOS_X64 -> "core2"
+        KonanTarget.LINUX_ARM32_HFP -> "arm1136jf-s"
+        else -> error("There is no support for ${target.name} target yet")
+    }
+
+    val cpuFeatures: String = ""
+
+    val inlineThreshold: Int? = when {
+        context.shouldOptimize() -> null
+        context.shouldContainDebugInfo() -> null
+        else -> null
+    }
+
+    val optimizationLevel: Int = when {
+        context.shouldOptimize() -> 2
+        context.shouldContainDebugInfo() -> 0
+        else -> 1
+    }
+
+    val sizeLevel: Int = when {
+        context.shouldOptimize() -> 0
+        context.shouldContainDebugInfo() -> 0
+        else -> 0
+    }
+
+    val codegenOptimizationLevel: LLVMCodeGenOptLevel = when {
+        context.shouldOptimize() -> LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive
+        context.shouldContainDebugInfo() -> LLVMCodeGenOptLevel.LLVMCodeGenLevelNone
+        else -> LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault
+    }
+
+    val relocMode: LLVMRelocMode = LLVMRelocMode.LLVMRelocDefault
+
+    val codeModel: LLVMCodeModel = LLVMCodeModel.LLVMCodeModelDefault
 }
 
-private fun getOptimizationLevel(context: Context): Int = when {
-    context.shouldOptimize() -> 2
-    context.shouldContainDebugInfo() -> 0
-    else -> 1
-}
-
-internal fun runBitcodeOptimizationPipeline(context: Context) {
+internal fun runLlvmOptimizationPipeline(context: Context) {
     val llvmModule = context.llvmModule!!
-    val targetTriple = context.llvm.targetTriple
+    val config = LlvmPipelineConfiguration(context)
 
     memScoped {
         initializeLlvm()
         val passBuilder = LLVMPassManagerBuilderCreate()
         val modulePasses = LLVMCreatePassManager()
-        LLVMPassManagerBuilderSetOptLevel(passBuilder, getOptimizationLevel(context))
-        LLVMPassManagerBuilderSetSizeLevel(passBuilder, 0)
+        LLVMPassManagerBuilderSetOptLevel(passBuilder, config.optimizationLevel)
+        LLVMPassManagerBuilderSetSizeLevel(passBuilder, config.sizeLevel)
         // TODO: use LLVMGetTargetFromName instead.
         val target = alloc<LLVMTargetRefVar>()
-        if (LLVMGetTargetFromTriple(targetTriple, target.ptr, null) != 0) {
-            context.reportCompilationError("Cannot get target from triple $targetTriple.")
+        if (LLVMGetTargetFromTriple(config.targetTriple, target.ptr, null) != 0) {
+            context.reportCompilationError("Cannot get target from triple ${config.targetTriple}.")
         }
         val targetMachine = LLVMCreateTargetMachine(
                 target.value,
-                targetTriple,
-                context.config.target.cpuArchitecture,
-                context.config.target.cpuFeatures,
-                LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
-                LLVMRelocMode.LLVMRelocDefault,
-                LLVMCodeModel.LLVMCodeModelDefault)
+                config.targetTriple,
+                config.cpuArchitecture,
+                config.cpuFeatures,
+                config.codegenOptimizationLevel,
+                config.relocMode,
+                config.codeModel)
 
         val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
         LLVMAddTargetLibraryInfo(targetLibraryInfo, modulePasses)
         // TargetTransformInfo pass.
         LLVMAddAnalysisPasses(targetMachine, modulePasses)
+        // Since we are in a "closed world" internalization and global dce
+        // can be safely used to reduce size of a bitcode.
         LLVMAddInternalizePass(modulePasses, 0)
         LLVMAddGlobalDCEPass(modulePasses)
-        getInlineThreshold(context)?.let { threshold ->
+
+        config.inlineThreshold?.let { threshold ->
             LLVMPassManagerBuilderUseInlinerWithThreshold(passBuilder, threshold)
         }
-        LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, 0, 1)
+        LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, Internalize = 0, RunInliner = 1)
         LLVMPassManagerBuilderDispose(passBuilder)
 
         LLVMRunPassManager(modulePasses, llvmModule)

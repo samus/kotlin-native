@@ -76,7 +76,7 @@ internal fun produceOutput(context: Context) {
                 embedAppleLinkerOptionsToBitcode(context.llvm, context.config)
             }
             if (shouldUseLlvmApi(context)) {
-                runBitcodeOptimizationPipeline(context)
+                runLlvmOptimizationPipeline(context)
             }
             LLVMWriteBitcodeToFile(context.llvmModule!!, output)
         }
