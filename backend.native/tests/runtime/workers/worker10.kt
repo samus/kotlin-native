@@ -15,7 +15,7 @@ val topData = Data(42)
 @SharedImmutable
 val topSharedData = Data(43)
 
-@Test fun runTest() {
+@Test fun runTest1() {
     val worker = Worker.start()
 
     assertEquals(1, topInt)
@@ -78,4 +78,24 @@ val topSharedData = Data(43)
 
     worker.requestTermination().result
     println("OK")
+}
+
+val ref = AtomicReference<Any?>(Any().freeze())
+
+val semaphore = AtomicInt(0)
+
+@Test fun runTest2() {
+    val worker = Worker.start()
+    val future = worker.execute(TransferMode.SAFE, { null }) {
+        val value = ref.value
+        semaphore.increment()
+        while (semaphore.value != 2) {}
+        println(value != null)
+    }
+    while (semaphore.value != 1) {}
+    ref.value = null
+    kotlin.native.internal.GC.collect()
+    semaphore.increment()
+    future.result
+    worker.requestTermination().result
 }

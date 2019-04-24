@@ -824,8 +824,8 @@ void dumpObject(ObjHeader* ref, int indent) {
 }
 
 void dumpContainerContent(ContainerHeader* container) {
-  if (container->refCount() <= 0) {
-    MEMORY_LOG("%p has non-positive RC, likely a memory bug\n", container)
+  if (container->refCount() < 0) {
+    MEMORY_LOG("%p has negative RC %d, likely a memory bug\n", container, container->refCount())
     return;
   }
   if (isAggregatingFrozenContainer(container)) {
@@ -1433,6 +1433,8 @@ void processDecrements(MemoryState* state) {
      toRelease->pop_back();
      if (isMarkedAsRemoved(container))
        continue;
+     if (container->shareable())
+       container = realShareableContainer(container);
      DecrementRC(container);
   }
   state->gcSuspendCount--;
@@ -1509,6 +1511,16 @@ void garbageCollect(MemoryState* state, bool force) {
 #endif
 
   GC_LOG("<<< GC: toFree %d toRelease %d\n", state->toFree->size(), state->toRelease->size())
+}
+
+void rememberNewContainer(ContainerHeader* container) {
+  if (container == nullptr) return;
+  // Instances can be allocated before actual runtime init - be prepared for that.
+  if (memoryState != nullptr) {
+    IncrementRC</* Atomic = */ false>(container);
+    // We cannot collect until reference will be stored into the stack slot.
+    EnqueueDecrementRC</* CanCollect = */ true>(container);
+  }
 }
 
 #endif  // USE_GC
@@ -1592,13 +1604,7 @@ OBJ_GETTER(AllocInstance, const TypeInfo* type_info) {
   RuntimeAssert(type_info->instanceSize_ >= 0, "must be an object");
   auto* state = memoryState;
   auto container = ObjectContainer(state, type_info);
-  // Instances can be allocated before actual runtime init - be prepared for that.
-  if (state != nullptr) {
-    ContainerHeader* header = container.header();
-    IncrementRC</* Atomic = */ false>(header);
-    // We cannot collect until reference will be stored into the stack slot.
-    EnqueueDecrementRC</* CanCollect = */ true>(header);
-  }
+  rememberNewContainer(container.header());
   RETURN_OBJ(container.GetPlace());
 }
 
@@ -1607,12 +1613,7 @@ OBJ_GETTER(AllocArrayInstance, const TypeInfo* type_info, int32_t elements) {
   if (elements < 0) ThrowIllegalArgumentException();
   auto* state = memoryState;
   auto container = ArrayContainer(state, type_info, elements);
-  // Instances can be allocated before actual runtime init - be prepared for that.
-  if (state != nullptr) {
-    ContainerHeader* header = container.header();
-    IncrementRC</* Atomic = */ false>(header);
-    EnqueueDecrementRC</* CanCollect = */ true>(header);
-  }
+  rememberNewContainer(container.header());
   RETURN_OBJ(container.GetPlace()->obj());
 }
 
@@ -2101,7 +2102,7 @@ void freezeAcyclic(ContainerHeader* rootContainer, ContainerHeaderSet* newlyFroz
     // color and similar attributes shall not be used.
     if (current->tag() == CONTAINER_TAG_NORMAL)
       newlyFrozen->insert(current);
-    MEMORY_LOG("freezeing %p\n", current)
+    MEMORY_LOG("freezing %p\n", current)
     current->freeze();
     traverseContainerReferredObjects(current, [current, &queue](ObjHeader* obj) {
         ContainerHeader* objContainer = obj->container();
@@ -2172,7 +2173,7 @@ void freezeCyclic(ContainerHeader* rootContainer,
         newlyFrozen->insert(container);
       // Note, that once object is frozen, it could be concurrently accessed, so
       // color and similar attributes shall not be used.
-      MEMORY_LOG("freezeing %p\n", container)
+      MEMORY_LOG("freezing %p\n", container)
       container->freeze();
       // We set refcount of original container to zero, so that it is seen as such after removal
       // meta-object, where aggregating container is stored.
@@ -2218,6 +2219,8 @@ void FreezeSubgraph(ObjHeader* root) {
   ContainerHeader* rootContainer = root->container();
   if (Shareable(rootContainer)) return;
 
+  MEMORY_LOG("Freeze subgraph of %p\n", root)
+
   // Do DFS cycle detection.
   bool hasCycles = false;
   KRef firstBlocker = root->has_meta_object() && ((root->meta_object()->flags_ & MF_NEVER_FROZEN) != 0) ?
@@ -2225,6 +2228,7 @@ void FreezeSubgraph(ObjHeader* root) {
   KStdVector<ContainerHeader*> order;
   depthFirstTraversal(rootContainer, &hasCycles, &firstBlocker, &order);
   if (firstBlocker != nullptr) {
+    MEMORY_LOG("See freeze blocker for %p: %p\n", root, firstBlocker)
     ThrowFreezingException(root, firstBlocker);
   }
   ContainerHeaderSet newlyFrozen;
@@ -2234,6 +2238,7 @@ void FreezeSubgraph(ObjHeader* root) {
   } else {
     freezeAcyclic(rootContainer, &newlyFrozen);
   }
+  MEMORY_LOG("Graph of %p is %s with %d elements\n", root, hasCycles ? "cyclic" : "acyclic", newlyFrozen.size())
 
 #if USE_GC
   // Now remove frozen objects from the toFree list.
@@ -2270,6 +2275,8 @@ OBJ_GETTER(SwapHeapRefLocked,
   if (shallRelease) {
     ReleaseHeapRef(oldValue);
   }
+  // No need to rememberNewContainer(), as oldValue is already
+  // present on this worker.
   UpdateReturnRef(OBJ_RESULT, oldValue);
   return oldValue;
 }
@@ -2289,8 +2296,19 @@ OBJ_GETTER(ReadHeapRefLocked, ObjHeader** location, int32_t* spinlock) {
   lock(spinlock);
   ObjHeader* value = *location;
   unlock(spinlock);
-  UpdateReturnRef(OBJ_RESULT, value);
-  return value;
+  if (value != nullptr)
+    rememberNewContainer(value->container());
+  RETURN_OBJ(value);
+}
+
+OBJ_GETTER(ReadHeapRefNoLock, ObjHeader* object, KInt index) {
+  MEMORY_LOG("ReadHeapRefNoLock: %p index %d\n", object, index)
+  ObjHeader** location = reinterpret_cast<ObjHeader**>(
+    reinterpret_cast<uintptr_t>(object) + object->type_info()->objOffsets_[index]);
+  ObjHeader* value = *location;
+  if (value != nullptr)
+    rememberNewContainer(value->container());
+  RETURN_OBJ(value);
 }
 
 void EnsureNeverFrozen(ObjHeader* object) {
@@ -2343,6 +2361,8 @@ KBoolean Konan_ensureAcyclicAndSet(ObjHeader* where, KInt index, ObjHeader* what
     // Fence on updated location?
     return true;
 }
+
+
 
 void Kotlin_Any_share(ObjHeader* obj) {
     auto* container = obj->container();
