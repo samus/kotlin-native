@@ -123,6 +123,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
         config.inlineThreshold?.let { threshold ->
             LLVMPassManagerBuilderUseInlinerWithThreshold(passBuilder, threshold)
         }
+        // Pipeline that is similar to `llvm-lto`.
         LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, Internalize = 0, RunInliner = 1)
         LLVMPassManagerBuilderDispose(passBuilder)
 
