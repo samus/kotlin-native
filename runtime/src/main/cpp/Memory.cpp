@@ -1076,20 +1076,6 @@ inline void AddHeapRef(const ObjHeader* header) {
     AddHeapRef(const_cast<ContainerHeader*>(container));
 }
 
-inline void AddStackRef(ContainerHeader* container) {
-  UPDATE_ADDREF_STAT(memoryState, container, needAtomicAccess(container), 1);
-  if (container->shareable()) {
-    IncrementRC</* Atomic = */ true>(container);
-  }
-}
-
-inline void AddStackRef(const ObjHeader* header) {
-  auto* container = header->container();
-  if (container != nullptr) {
-    AddStackRef(const_cast<ContainerHeader*>(container));
-  }
-}
-
 inline void ReleaseHeapRef(ContainerHeader* container) {
   MEMORY_LOG("ReleaseHeapRef %p: rc=%d\n", container, container->refCount())
   UPDATE_RELEASEREF_STAT(memoryState, container, needAtomicAccess(container), canBeCyclic(container), 0)
@@ -1098,20 +1084,10 @@ inline void ReleaseHeapRef(ContainerHeader* container) {
   }
 }
 
-inline void ReleaseStackRef(ContainerHeader* container) {
-  UPDATE_RELEASEREF_STAT(memoryState, container, needAtomicAccess(container), canBeCyclic(container), 1)
-}
-
 inline void ReleaseHeapRef(const ObjHeader* header) {
   auto* container = header->container();
   if (container != nullptr)
     ReleaseHeapRef(const_cast<ContainerHeader*>(container));
-}
-
-inline void ReleaseStackRef(const ObjHeader* header) {
-  auto* container = header->container();
-  if (container != nullptr)
-    ReleaseStackRef(const_cast<ContainerHeader*>(container));
 }
 
 // We use first slot as place to store frame-local arena container.
@@ -1796,7 +1772,7 @@ void UpdateHeapRefIfNull(ObjHeader** location, const ObjHeader* object) {
   }
 }
 
-void EnterFrame(ObjHeader** start, int parameters, int count) {
+void* EnterFrame(ObjHeader** start, int parameters, int count) {
   MEMORY_LOG("EnterFrame %p: %d parameters %d locals\n", start, parameters, count)
   FrameOverlay* frame = reinterpret_cast<FrameOverlay*>(start);
   frame->previous = currentFrame;
@@ -1804,12 +1780,13 @@ void EnterFrame(ObjHeader** start, int parameters, int count) {
   // TODO: maybe compress in single value somehow.
   frame->parameters = parameters;
   frame->count = count;
+  return &currentFrame;
 }
 
-void LeaveFrame(ObjHeader** start, int parameters, int count) {
-  MEMORY_LOG("LeaveFrame %p: %d parameters %d locals\n", start, parameters, count)
+void LeaveFrame(ObjHeader** start, void* frameHandle) {
+  MEMORY_LOG("LeaveFrame %p %p\n", start, frame)
   FrameOverlay* frame = reinterpret_cast<FrameOverlay*>(start);
-  currentFrame = frame->previous;
+  *reinterpret_cast<FrameOverlay**>(frameHandle) = frame->previous;
 }
 
 #if USE_GC

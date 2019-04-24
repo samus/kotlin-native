@@ -482,9 +482,9 @@ void SetHeapRefLocked(ObjHeader** location, ObjHeader* newValue, int32_t* spinlo
 // Reads reference with taken lock.
 OBJ_GETTER(ReadHeapRefLocked, ObjHeader** location, int32_t* spinlock) RUNTIME_NOTHROW;
 // Called on frame enter, if it has object slots.
-void EnterFrame(ObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
+void* EnterFrame(ObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
 // Called on frame leave, if it has object slots.
-void LeaveFrame(ObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
+void LeaveFrame(ObjHeader** start, void* enterFrameResult) RUNTIME_NOTHROW;
 // Collect garbage, which cannot be found by reference counting (cycles).
 void GarbageCollect() RUNTIME_NOTHROW;
 // Clears object subgraph references from memory subsystem, and optionally
@@ -496,6 +496,7 @@ void* CreateStablePointer(ObjHeader* obj) RUNTIME_NOTHROW;
 // Disposes stable pointer to the object.
 void DisposeStablePointer(void* pointer) RUNTIME_NOTHROW;
 // Translate stable pointer to object reference.
+OBJ_GETTER(DerefStablePointer, void*) RUNTIME_NOTHROW;
 OBJ_GETTER(DerefStablePointer, void*) RUNTIME_NOTHROW;
 // Move stable pointer ownership.
 OBJ_GETTER(AdoptStablePointer, void*) RUNTIME_NOTHROW;
@@ -509,7 +510,6 @@ void EnsureNeverFrozen(ObjHeader* obj);
 }
 #endif
 
-
 struct FrameOverlay {
   void* arena;
   FrameOverlay* previous;
@@ -522,16 +522,16 @@ struct FrameOverlay {
 class ObjHolder {
  public:
    ObjHolder() : obj_(nullptr) {
-     EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*));
+     handle_ = EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*) - 1);
    }
 
    explicit ObjHolder(const ObjHeader* obj) {
-     EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*));
+     handle_ = EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*) - 1);
      ::SetStackRef(slot(), obj);
    }
 
    ~ObjHolder() {
-     LeaveFrame(frame(), 0, sizeof(*this)/sizeof(void*));
+     LeaveFrame(frame(), handle_);
    }
 
    ObjHeader* obj() { return obj_; }
@@ -549,6 +549,7 @@ class ObjHolder {
 
    FrameOverlay frame_;
    ObjHeader* obj_;
+   void* handle_;
 };
 
 class ExceptionObjHolder {

@@ -894,8 +894,8 @@ internal class CAdapterGenerator(val context: Context) : DeclarationDescriptorVi
         |void* CreateStablePointer(KObjHeader*) RUNTIME_NOTHROW;
         |void DisposeStablePointer(void*) RUNTIME_NOTHROW;
         |int IsInstance(const KObjHeader*, const KTypeInfo*) RUNTIME_NOTHROW;
-        |void EnterFrame(KObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
-        |void LeaveFrame(KObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
+        |void* EnterFrame(KObjHeader** start, int parameters, int count) RUNTIME_NOTHROW;
+        |void LeaveFrame(KObjHeader** start, void* handle) RUNTIME_NOTHROW;
         |void Kotlin_initRuntimeIfNeeded();
         |
         |KObjHeader* CreateStringFromCString(const char*, KObjHeader**);
@@ -913,20 +913,21 @@ internal class CAdapterGenerator(val context: Context) : DeclarationDescriptorVi
         |class KObjHolder {
         |public:
         |  KObjHolder() : obj_(nullptr) {
-        |    EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*));
+        |    handle_ = EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*) - 1);
         |  }
         |  explicit KObjHolder(const KObjHeader* obj) : obj_(nullptr) {
-        |    EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*));
-        |    UpdateStackRef(&obj_, obj);
+        |    handle_ = EnterFrame(frame(), 0, sizeof(*this)/sizeof(void*) - 1);
+        |    obj_ = const_cast<KObjHeader*>(obj);
         |  }
         |  ~KObjHolder() {
-        |    LeaveFrame(frame(), 0, sizeof(*this)/sizeof(void*));
+        |    LeaveFrame(frame(), handle_);
         |  }
         |  KObjHeader* obj() { return obj_; }
         |  KObjHeader** slot() { return &obj_; }
         | private:
         |  ${prefix}_FrameOverlay frame_;
         |  KObjHeader* obj_;
+        |  void* handle_;
         |
         |  KObjHeader** frame() { return reinterpret_cast<KObjHeader**>(&frame_); }
         |};

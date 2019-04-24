@@ -9,7 +9,6 @@ package org.jetbrains.kotlin.backend.konan.llvm
 import kotlinx.cinterop.*
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.*
-import org.jetbrains.kotlin.backend.konan.descriptors.isInterface
 import org.jetbrains.kotlin.backend.konan.llvm.objc.*
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.declarations.*
@@ -176,6 +175,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
         get() = (irFunction as? IrConstructor)?.constructedClass
     private var returnSlot: LLVMValueRef? = null
     private var slotsPhi: LLVMValueRef? = null
+    private var frameHandle: LLVMValueRef? = null
     private val frameOverlaySlotCount =
             (LLVMStoreSizeOfType(llvmTargetData, runtime.frameOverlayType) / runtime.pointerSize).toInt()
     private var slotCount = frameOverlaySlotCount
@@ -914,7 +914,8 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
                                 Int32(slotCount * codegen.runtime.pointerSize).llvm,
                                 Int32(codegen.runtime.pointerAlignment).llvm,
                                 Int1(0).llvm))
-                call(context.llvm.enterFrameFunction, listOf(slots, Int32(vars.skipSlots).llvm, Int32(slotCount).llvm))
+                frameHandle =
+                        call(context.llvm.enterFrameFunction, listOf(slots, Int32(vars.skipSlots).llvm, Int32(slotCount).llvm))
             }
             addPhiIncoming(slotsPhi!!, prologueBb to slots)
             memScoped {
@@ -999,6 +1000,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
         vars.clear()
         returnSlot = null
         slotsPhi = null
+        frameHandle = null
     }
 
     private val kotlinExceptionRtti: ConstPointer
@@ -1113,8 +1115,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
 
     private fun releaseVars() {
         if (needSlots) {
-            call(context.llvm.leaveFrameFunction,
-                    listOf(slotsPhi!!, Int32(vars.skipSlots).llvm, Int32(slotCount).llvm))
+            call(context.llvm.leaveFrameFunction, listOf(slotsPhi!!, frameHandle!!))
         }
     }
 }
