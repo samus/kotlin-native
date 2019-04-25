@@ -53,6 +53,7 @@ import org.jetbrains.kotlin.backend.common.serialization.KotlinMangler
 import org.jetbrains.kotlin.backend.konan.objcexport.ObjCExport
 import org.jetbrains.kotlin.backend.konan.llvm.coverage.CoverageManager
 import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
+import org.jetbrains.kotlin.name.FqName
 
 /**
  * Offset for synthetic elements created by lowerings and not attributable to other places in the source code.

@@ -59,13 +59,13 @@ private class LlvmPipelineConfiguration(context: Context) {
     val cpuFeatures: String = ""
 
     val inlineThreshold: Int? = when {
-        context.shouldOptimize() -> null
+        context.shouldOptimize() -> 100
         context.shouldContainDebugInfo() -> null
         else -> null
     }
 
     val optimizationLevel: Int = when {
-        context.shouldOptimize() -> 2
+        context.shouldOptimize() -> 3
         context.shouldContainDebugInfo() -> 0
         else -> 1
     }
