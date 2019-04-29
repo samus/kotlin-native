@@ -32,7 +32,6 @@ buildscript {
     }
 }
 
-apply plugin: NativeInteropPlugin
 apply plugin: 'konan'
 
 configurations {
@@ -265,7 +264,7 @@ Task standaloneTest(String name, Closure configureClosure) {
         task.configure(configureClosure)
         if (task.enabled) {
             konanArtifacts {
-                program(name, targets: [target.name ?: 'host']) {
+                program(name, targets: [target.name]) {
                     baseDir   "$testOutputLocal/$name"
                     srcFiles  task.getSources()
                     extraOpts task.flags
@@ -3111,67 +3110,82 @@ int customCompare(const char* str1, const char* str2) {
     return file.absolutePath
 }
 
-kotlinNativeInterop {
-    target project.testTarget ?: 'host'
-    flavor 'native'
-
-    sysstat {
-        pkg 'sysstat'
-        headers 'sys/stat.h'
-    }
-
-    cstdlib {
-        pkg 'cstdlib'
-        headers 'stdlib.h'
-    }
-
-    cstdio {
-        defFile 'interop/basics/cstdio.def'
-    }
-
-    sockets {
-        defFile 'interop/basics/sockets.def'
-    }
-
-    bitfields {
-        defFile 'interop/basics/bitfields.def'
-    }
-
-    cglobals {
-        defFile 'interop/basics/cglobals.def'
-    }
-
-    cfunptr {
-        defFile 'interop/basics/cfunptr.def'
-    }
-
-    cmacros {
-        defFile 'interop/basics/cmacros.def'
-    }
-
-    cunsupported {
-        defFile 'interop/basics/cunsupported.def'
-    }
-
-    ctypes {
-        defFile 'interop/basics/ctypes.def'
-    }
-
-    ccallbacksAndVarargs {
-        defFile 'interop/basics/ccallbacksAndVarargs.def'
-    }
-
-    if (isAppleTarget(project)) {
-        objcSmoke {
-            defFile 'interop/objc/objcSmoke.def'
-            headers "$projectDir/interop/objc/smoke.h"
-            linkerOpts "-L$buildDir",  "-lobjcsmoke"
+// A helper method to create interop artifacts
+void createInterop(String name, Closure conf) {
+    konanArtifacts {
+        interop(name, targets: [target.name]) {
+            conf(it)
+            noDefaultLibs(true)
+            baseDir "$testOutputLocal/$name"
         }
     }
+}
 
-    withSpaces {
-        defFile generateWithSpaceDefFile()
+// Creates interop
+createInterop("sysstat") {
+    // FIXME: creates empty file to workaround konan gradle plugin issue (should be able to have no def file)
+    def f = File.createTempFile("sysstat.empty", ".def")
+    it.packageName 'sysstat'
+    // FIXME: this option doesn't work due to an issue in plugin: it tries to resolve header in project dir.
+    //it.headers 'sys/stat.h'
+    f.write("headers = sys/stat.h")
+    it.defFile f
+}
+
+createInterop("cstdlib") {
+    def f = File.createTempFile("cstdlib.empty", ".def")
+    it.packageName 'cstdlib'
+//    it.headers 'stdlib.h'
+    f.write("headers = stdlib.h")
+    it.defFile f
+}
+
+createInterop("cstdio") {
+    it.defFile 'interop/basics/cstdio.def'
+}
+
+createInterop("sockets") {
+    it.defFile 'interop/basics/sockets.def'
+}
+
+createInterop("bitfields") {
+    it.defFile 'interop/basics/bitfields.def'
+}
+
+createInterop("cglobals") {
+    it.defFile 'interop/basics/cglobals.def'
+}
+
+createInterop("cfunptr") {
+    it.defFile 'interop/basics/cfunptr.def'
+}
+
+createInterop("cmacros") {
+    it.defFile 'interop/basics/cmacros.def'
+}
+
+createInterop("cunsupported") {
+    it.defFile 'interop/basics/cunsupported.def'
+}
+
+createInterop("ctypes") {
+    it.defFile 'interop/basics/ctypes.def'
+}
+
+createInterop("ccallbacksAndVarargs") {
+    it.defFile 'interop/basics/ccallbacksAndVarargs.def'
+}
+
+if (isAppleTarget(project)) {
+    createInterop("objcSmoke") {
+        it.defFile 'interop/objc/objcSmoke.def'
+        it.headers "$projectDir/interop/objc/smoke.h"
+        it.linkerOpts "-L$buildDir",  "-lobjcsmoke"
     }
+}
+
+createInterop("withSpaces") {
+    it.defFile generateWithSpaceDefFile()
 }
 
 /**
@@ -3182,40 +3196,17 @@ Task interopTest(String name, Closure<KonanInteropTest> configureClosure) {
         task.configure(configureClosure)
         if (task.enabled) {
             konanArtifacts {
-                def conf = project.kotlinNativeInterop[task.interop]
-                def lib = conf.name + name
-                interop(lib, targets: [target.name ?: 'host']) {
-                    defFile((conf.defFile != null)
-                            ? conf.defFile
-                            // FIXME: creates empty file to workaround konan gradle plugin issue (should be able to have no def file)
-                            : File.createTempFile("${conf.name}.empty", ".def"))
-
-                    // FIXME: this option doesn't work due to an issue in plugin: it tries to resolve header in project dir.
-                    if (conf.headers != null && conf.defFile != null) headers(conf.headers)
-                    // FIXME: remove this when fixed
-                    else if (conf.headers != null && !conf.headers.isEmpty()) {
-                        def f = File.createTempFile("${conf.name}.empty", ".def")
-                        def h = conf.headers.join(" ")
-                        f.write("headers = $h")
-                        defFile(f)
-                    }
-
-                    if (conf.pkg != null) packageName(conf.pkg)
-                    if (conf.linkerOpts != null) linkerOpts(conf.linkerOpts)
-                    noDefaultLibs(true)
-                    baseDir "$testOutputLocal/$name"
-                }
+                def lib = task.interop
                 def libTask = "compileKonan${lib.capitalize()}${target.name.capitalize()}"
                 UtilsKt.setDistDependencyFor(project, libTask)
                 UtilsKt.setSameDependenciesAs(libTask, task as KonanInteropTest)
 
-                program(name, targets: [target.name ?: 'host']) {
+                program(name, targets: [target.name]) {
                     libraries {
                         artifact lib
                     }
                     srcFiles task.getSources()
                     baseDir "$testOutputLocal/$name"
-                    if (conf.linkerOpts != null) linkerOpts(conf.linkerOpts)
                     extraOpts task.flags
                     extraOpts project.globalTestArgs
                 }
@@ -3437,7 +3428,6 @@ task library_mismatch(type: KonanDriverTest) {
     def currentTarget = project.target.name
     def someOtherTarget = (project.testTarget == 'wasm32' ? project.hostName : 'wasm32')
 
-    // FIXME: is this correct? If there are no custom dist, it depends on crossDist making sanity task run longer
     if (!useCustomDist) {
         dependsOn ':wasm32CrossDistRuntime' // we actually need any target other than the current one.
     }

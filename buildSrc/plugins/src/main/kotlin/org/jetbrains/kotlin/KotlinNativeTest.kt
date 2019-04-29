@@ -37,13 +37,13 @@ abstract class KonanTest : DefaultTask() {
     /**
      * Test output directory. Used to store processed sources and binary artifacts.
      */
-    lateinit var outputDirectory: String
+    abstract val outputDirectory: String
 
     /**
      * Test logger to be used for the test built with TestRunner (`-tr` option).
      */
-    @Optional
-    lateinit var testLogger: Logger
+    @set:Optional
+    abstract var testLogger: Logger
 
     /**
      * Test executable arguments.
@@ -54,8 +54,7 @@ abstract class KonanTest : DefaultTask() {
     /**
      * Test executable.
      */
-    @Input
-    lateinit var executable: String
+    abstract val executable: String
 
     /**
      * Test source.
@@ -88,7 +87,7 @@ abstract class KonanTest : DefaultTask() {
         if (!::arguments.isInitialized) {
             arguments = mutableListOf()
         }
-        if (::testLogger.isInitialized && testLogger != Logger.EMPTY) {
+        if (testLogger != Logger.EMPTY) {
             arguments.add("--ktest_logger=$testLogger")
         }
         if (useFilter && ::source.isInitialized) {
@@ -137,15 +136,15 @@ fun <T: KonanTest> Project.createTest(name: String, type: Class<T>, config: Clos
  * Runs tests with GTEST output and parses it to create statistics info
  */
 open class KonanGTest : KonanTest() {
-    init {
-        // Use GTEST logger to parse test results later
-        testLogger = Logger.GTEST
-        outputDirectory = "${project.testOutputStdlib}/$name"
-        val target = project.testTarget
-        executable = "$outputDirectory/${target.name}/$name.${target.family.exeSuffix}"
-    }
+    override val outputDirectory = "${project.testOutputStdlib}/$name"
 
-    lateinit var statistics: Statistics
+    // Use GTEST logger to parse test results later
+    override var testLogger = Logger.GTEST
+
+    override val executable: String
+        get() = "$outputDirectory/${project.testTarget.name}/$name.${project.testTarget.family.exeSuffix}"
+
+    var statistics = Statistics()
 
     @TaskAction
     override fun run() = runProcess(
@@ -153,12 +152,12 @@ open class KonanGTest : KonanTest() {
             executable = executable,
             args = arguments
     ).run {
-        statistics = parse(stdOut)
+        parse(stdOut)
         print()
         check(exitCode == 0) { "Test $executable exited with $exitCode" }
     }
 
-    private fun parse(output: String): Statistics = Statistics().apply {
+    private fun parse(output: String) = statistics.apply {
         Pattern.compile("\\[  PASSED  ] ([0-9]*) tests\\.").matcher(output)
                 .apply { if (find()) pass(group(1).toInt()) }
 
@@ -178,13 +177,13 @@ open class KonanGTest : KonanTest() {
  * Note: this task should depend on task that builds a test binary.
  */
 open class KonanLocalTest : KonanTest() {
-    init {
-        // local tests built into a single binary with the known name
-        val target = project.testTarget
-        outputDirectory = project.testOutputLocal
-        executable = "$outputDirectory/${target.name}/localTest.${target.family.exeSuffix}"
-        testLogger = Logger.SILENT
-    }
+    override val outputDirectory = project.testOutputLocal
+
+    // local tests built into a single binary with the known name
+    override val executable: String
+        get() = "$outputDirectory/${project.testTarget.name}/localTest.${project.testTarget.family.exeSuffix}"
+
+    override var testLogger = Logger.SILENT
 
     @Optional
     var expectedExitStatus = 0
@@ -286,12 +285,16 @@ open class KonanLocalTest : KonanTest() {
  */
 open class KonanStandaloneTest : KonanLocalTest() {
     init {
-        val target = project.testTarget
-        outputDirectory = "${project.testOutputLocal}/$name"
-        executable = "$outputDirectory/${target.name}/$name.${target.family.exeSuffix}"
         useFilter = false
-        testLogger = Logger.EMPTY
     }
+
+    override val outputDirectory: String
+        get() = "${project.testOutputLocal}/$name"
+
+    override var testLogger = Logger.EMPTY
+
+    override val executable: String
+        get() = "$outputDirectory/${project.testTarget.name}/$name.${project.testTarget.family.exeSuffix}"
 
     @Optional
     var enableKonanAssertions = true
@@ -302,9 +305,9 @@ open class KonanStandaloneTest : KonanLocalTest() {
      */
     var flags: MutableList<String>
         get() {
-                if (enableKonanAssertions) _flags.add("-ea")
+                if (enableKonanAssertions && !_flags.contains("-ea")) _flags.add("-ea")
                 return _flags
-            }
+        }
         @Optional
         set(value) {
             _flags = value
@@ -348,7 +351,6 @@ open class KonanDriverTest : KonanStandaloneTest() {
             addAll(getSources())
             addAll(flags)
             addAll(project.globalTestArgs)
-            if (enableKonanAssertions) add("-ea")
         }
 
         // run konanc compiler locally
