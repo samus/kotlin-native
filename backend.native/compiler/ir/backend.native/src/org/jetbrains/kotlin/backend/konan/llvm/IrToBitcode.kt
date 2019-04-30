@@ -1761,10 +1761,9 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
     private fun file() = (currentCodeContext.fileScope() as FileScope).file
 
     //-------------------------------------------------------------------------//
-    private fun updateBuilderDebugLocation(element: IrElement): DILocationRef? {
-        if (!context.shouldContainDebugInfo() || currentCodeContext.functionScope() == null) return null
-        @Suppress("UNCHECKED_CAST")
-        return element.startLocation?.let { functionGenerationContext.debugLocation(it) }
+    private fun updateBuilderDebugLocation(element: IrElement) {
+        if (!context.shouldContainDebugInfo() || currentCodeContext.functionScope() == null || element.startLocation == null) return
+        functionGenerationContext.debugLocation(element.startLocation!!, element.endLocation)
     }
 
     private val IrElement.startLocation: LocationInfo?
