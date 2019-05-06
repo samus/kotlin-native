@@ -32,7 +32,7 @@ abstract class KonanTest : DefaultTask() {
 
     var disabled: Boolean
         get() = !enabled
-        @Optional set(value) { enabled = !value }
+        set(value) { enabled = !value }
 
     /**
      * Test output directory. Used to store processed sources and binary artifacts.
@@ -42,14 +42,13 @@ abstract class KonanTest : DefaultTask() {
     /**
      * Test logger to be used for the test built with TestRunner (`-tr` option).
      */
-    @set:Optional
     abstract var testLogger: Logger
 
     /**
      * Test executable arguments.
      */
     @Input
-    lateinit var arguments: MutableList<String>
+    var arguments = mutableListOf<String>()
 
     /**
      * Test executable.
@@ -84,9 +83,6 @@ abstract class KonanTest : DefaultTask() {
         group = LifecycleBasePlugin.VERIFICATION_GROUP
         description = "Kotlin/Native test infrastructure task"
 
-        if (!::arguments.isInitialized) {
-            arguments = mutableListOf()
-        }
         if (testLogger != Logger.EMPTY) {
             arguments.add("--ktest_logger=$testLogger")
         }
@@ -106,8 +102,10 @@ abstract class KonanTest : DefaultTask() {
     internal fun ProcessOutput.print(prepend: String = "") {
         if (project.verboseTest)
             println(prepend + """
-                |stdout:$stdOut
-                |stderr:$stdErr
+                |stdout:
+                |$stdOut
+                |stderr:
+                |$stdErr
                 |exit code: $exitCode
                 """.trimMargin())
     }
@@ -151,10 +149,10 @@ open class KonanGTest : KonanTest() {
             executor = project.executor::execute,
             executable = executable,
             args = arguments
-    ).run {
-        parse(stdOut)
-        print()
-        check(exitCode == 0) { "Test $executable exited with $exitCode" }
+    ).let {
+        parse(it.stdOut)
+        it.print()
+        check(it.exitCode == 0) { "Test $executable exited with ${it.exitCode}" }
     }
 
     private fun parse(output: String) = statistics.apply {
@@ -198,19 +196,18 @@ open class KonanLocalTest : KonanTest() {
      * Used to validate output as a gold value.
      */
     @Optional
-    lateinit var goldValue: String
+    var goldValue: String? = null
 
     /**
      * Checks test's output against gold value and returns true if the output matches the expectation.
      */
     @Optional
-    var outputChecker: (String) -> Boolean = { str -> (!::goldValue.isInitialized || goldValue == str) }
-
+    var outputChecker: (String) -> Boolean = { str -> goldValue == null || goldValue == str }
     /**
      * Input test data to be passed to process' stdin.
      */
     @Optional
-    lateinit var testData: String
+    var testData: String? = null
 
     /**
      * Should compiler message be read and validated with output checker or gold value.
@@ -222,16 +219,16 @@ open class KonanLocalTest : KonanTest() {
     var multiRuns = false
 
     @Optional
-    lateinit var multiArguments: List<List<String>>
+    var multiArguments: List<List<String>>? = null
 
     @TaskAction
     override fun run() {
-        val times = if (multiRuns && ::multiArguments.isInitialized) multiArguments.size else 1
+        val times = if (multiRuns && multiArguments != null) multiArguments!!.size else 1
         var output = ProcessOutput("", "", 0)
         for (i in 1..times) {
-            val args = if (::multiArguments.isInitialized) arguments + multiArguments[i - 1] else arguments
-            output += if (::testData.isInitialized)
-                runProcessWithInput(project.executor::execute, executable, args, testData)
+            val args = arguments + (multiArguments?.get(i - 1) ?: emptyList())
+            output += if (testData != null)
+                runProcessWithInput(project.executor::execute, executable, args, testData!!)
             else
                 runProcess(project.executor::execute, executable, args)
         }
@@ -256,8 +253,10 @@ open class KonanLocalTest : KonanTest() {
             val message = "Expected exit status: $expectedExitStatus, actual: $exitCode"
             check(expectedFail) { """
                     |Test failed. $message
-                    |stdout: $stdOut
-                    |stderr: $stdErr
+                    |stdout:
+                    |$stdOut
+                    |stderr:
+                    |$stdErr
                     """.trimMargin()
             }
             println("Expected failure. $message")
@@ -266,7 +265,7 @@ open class KonanLocalTest : KonanTest() {
         val result = stdOut + stdErr
         val goldValueMismatch = !outputChecker(result.replace(System.lineSeparator(), "\n"))
         if (goldValueMismatch) {
-            val message = if (::goldValue.isInitialized)
+            val message = if (goldValue != null)
                 "Expected output: $goldValue, actual output: $result"
             else
                 "Actual output doesn't match with output checker: $result"
@@ -299,19 +298,11 @@ open class KonanStandaloneTest : KonanLocalTest() {
     @Optional
     var enableKonanAssertions = true
 
-    private var _flags: MutableList<String> = mutableListOf()
     /**
      * Compiler flags used to build a test.
      */
-    var flags: MutableList<String>
-        get() {
-                if (enableKonanAssertions && !_flags.contains("-ea")) _flags.add("-ea")
-                return _flags
-        }
-        @Optional
-        set(value) {
-            _flags = value
-        }
+    var flags: List<String> = listOf()
+        get() = if (enableKonanAssertions) field + "-ea" else field
 
     fun getSources() = buildCompileList(outputDirectory)
 }
@@ -325,7 +316,7 @@ open class KonanStandaloneTest : KonanLocalTest() {
 open class KonanDriverTest : KonanStandaloneTest() {
     override fun configure(config: Closure<*>): Task {
         super.configure(config)
-        if (doBefore != null) doFirst(doBefore!!)
+        doBefore?.let { doFirst(it) }
         return this
     }
 
@@ -341,7 +332,7 @@ open class KonanDriverTest : KonanStandaloneTest() {
         val konancDriver = if (HostManager.hostIsMingw) "konanc.bat" else "konanc"
         val konanc = File("${dist.canonicalPath}/bin/$konancDriver").absolutePath
 
-        File(executable).mkdirs()
+        File(executable).parentFile.mkdirs()
 
         val args = mutableListOf("-output", executable).apply {
             if (project.testTarget != HostManager.host) {
@@ -354,13 +345,13 @@ open class KonanDriverTest : KonanStandaloneTest() {
         }
 
         // run konanc compiler locally
-        runProcess(localExecutor(project), konanc, args).run {
-            print("Konanc compiler execution:")
+        runProcess(localExecutor(project), konanc, args).let {
+            it.print("Konanc compiler execution:")
             project.file("$executable.compilation.log").run {
-                writeText(stdOut)
-                writeText(stdErr)
+                writeText(it.stdOut)
+                writeText(it.stdErr)
             }
-            check(exitCode == 0) { "Compiler failed with exit code $exitCode" }
+            check(it.exitCode == 0) { "Compiler failed with exit code ${it.exitCode}" }
         }
     }
 }
