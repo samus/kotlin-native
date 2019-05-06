@@ -229,10 +229,26 @@ LLVMTargetLibraryInfoRef LLVMGetTargetLibraryInfo(LLVMModuleRef moduleRef) {
     return llvm::wrap(libraryInfo);
 }
 
-void LLVMKotlinInitialize() {
-    LLVMInitializeAllTargetInfos();
-    LLVMInitializeAllTargets();
-    LLVMInitializeAllTargetMCs();
-    LLVMInitializeAllAsmPrinters();
-    LLVMInitializeAllAsmParsers();
+void LLVMKotlinInitializeTargets() {
+#define INIT_LLVM_TARGET(TargetName) \
+    LLVMInitialize##TargetName##TargetInfo();\
+    LLVMInitialize##TargetName##Target();\
+    LLVMInitialize##TargetName##TargetMC();
+#if KONAN_MACOS
+    INIT_LLVM_TARGET(AArch64)
+    INIT_LLVM_TARGET(ARM)
+    INIT_LLVM_TARGET(Mips)
+    INIT_LLVM_TARGET(X86)
+    INIT_LLVM_TARGET(WebAssembly)
+#elif KONAN_LINUX
+    INIT_LLVM_TARGET(AArch64)
+    INIT_LLVM_TARGET(ARM)
+    INIT_LLVM_TARGET(Mips)
+    INIT_LLVM_TARGET(X86)
+#elif KONAN_WINDOWS
+    INIT_LLVM_TARGET(ARM)
+    INIT_LLVM_TARGET(X86)
+#endif
+
+#undef INIT_LLVM_TARGET
 }

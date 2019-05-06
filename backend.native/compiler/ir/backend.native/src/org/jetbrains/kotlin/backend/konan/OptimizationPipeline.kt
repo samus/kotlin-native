@@ -7,16 +7,12 @@ import kotlinx.cinterop.value
 import llvm.*
 import org.jetbrains.kotlin.konan.target.KonanTarget
 
-// Initialize all required LLVM machinery, ex. target registry.
-private fun initializeLlvm() {
-    LLVMKotlinInitialize()
-
+private fun initializeLlvmGlobalPassRegistry() {
     val passRegistry = LLVMGetGlobalPassRegistry()
 
     LLVMInitializeCore(passRegistry)
     LLVMInitializeTransformUtils(passRegistry)
     LLVMInitializeScalarOpts(passRegistry)
-    LLVMInitializeObjCARCOpts(passRegistry)
     LLVMInitializeVectorization(passRegistry)
     LLVMInitializeInstCombine(passRegistry)
     LLVMInitializeIPO(passRegistry)
@@ -49,16 +45,24 @@ private class LlvmPipelineConfiguration(context: Context) {
     val cpuArchitecture: String = when (target) {
         KonanTarget.IOS_ARM32 -> "armv7"
         KonanTarget.IOS_ARM64 -> "arm64"
+        KonanTarget.IOS_X64 -> "core2"
         KonanTarget.LINUX_X64 -> "x86-64"
-        KonanTarget.MINGW_X86 -> "sandybridge"
+        KonanTarget.MINGW_X86 -> "pentium4"
+        KonanTarget.MINGW_X64 -> "x86-64"
         KonanTarget.MACOS_X64 -> "core2"
         KonanTarget.LINUX_ARM32_HFP -> "arm1136jf-s"
-        else -> error("There is no support for ${target.name} target yet")
+        KonanTarget.LINUX_ARM64 -> "cortex-a57"
+        KonanTarget.ANDROID_ARM32 -> "armv7"
+        KonanTarget.ANDROID_ARM64 -> "arm64"
+        KonanTarget.LINUX_MIPS32 -> "mips32r2"
+        KonanTarget.LINUX_MIPSEL32 -> "mips32r2"
+        KonanTarget.WASM32,
+        is KonanTarget.ZEPHYR -> error("There is no support for ${target.name} target yet.")
     }
 
     val cpuFeatures: String = ""
 
-    val inlineThreshold: Int? = when {
+    val customInlineThreshold: Int? = when {
         context.shouldOptimize() -> 100
         context.shouldContainDebugInfo() -> null
         else -> null
@@ -87,21 +91,35 @@ private class LlvmPipelineConfiguration(context: Context) {
     val codeModel: LLVMCodeModel = LLVMCodeModel.LLVMCodeModelDefault
 }
 
+// Since we are in a "closed world" internalization and global dce
+// can be safely used to reduce size of a bitcode.
+internal fun runClosedWorldCleanup(context: Context) {
+    initializeLlvmGlobalPassRegistry()
+    val llvmModule = context.llvmModule!!
+    val modulePasses = LLVMCreatePassManager()
+    LLVMAddInternalizePass(modulePasses, 0)
+    LLVMAddGlobalDCEPass(modulePasses)
+    LLVMRunPassManager(modulePasses, llvmModule)
+    LLVMDisposePassManager(modulePasses)
+}
+
 internal fun runLlvmOptimizationPipeline(context: Context) {
     val llvmModule = context.llvmModule!!
     val config = LlvmPipelineConfiguration(context)
 
     memScoped {
-        initializeLlvm()
+        LLVMKotlinInitializeTargets()
+
+        initializeLlvmGlobalPassRegistry()
         val passBuilder = LLVMPassManagerBuilderCreate()
         val modulePasses = LLVMCreatePassManager()
         LLVMPassManagerBuilderSetOptLevel(passBuilder, config.optimizationLevel)
         LLVMPassManagerBuilderSetSizeLevel(passBuilder, config.sizeLevel)
         // TODO: use LLVMGetTargetFromName instead.
         val target = alloc<LLVMTargetRefVar>()
-        if (LLVMGetTargetFromTriple(config.targetTriple, target.ptr, null) != 0) {
-            context.reportCompilationError("Cannot get target from triple ${config.targetTriple}.")
-        }
+        val foundLlvmTarget = LLVMGetTargetFromTriple(config.targetTriple, target.ptr, null) == 0
+        check(foundLlvmTarget) { "Cannot get target from triple ${config.targetTriple}." }
+
         val targetMachine = LLVMCreateTargetMachine(
                 target.value,
                 config.targetTriple,
@@ -120,10 +138,11 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
         LLVMAddInternalizePass(modulePasses, 0)
         LLVMAddGlobalDCEPass(modulePasses)
 
-        config.inlineThreshold?.let { threshold ->
+        config.customInlineThreshold?.let { threshold ->
             LLVMPassManagerBuilderUseInlinerWithThreshold(passBuilder, threshold)
         }
         // Pipeline that is similar to `llvm-lto`.
+        // TODO: Add ObjC optimization passes.
         LLVMPassManagerBuilderPopulateLTOPassManager(passBuilder, modulePasses, Internalize = 0, RunInliner = 1)
         LLVMPassManagerBuilderDispose(passBuilder)
 
