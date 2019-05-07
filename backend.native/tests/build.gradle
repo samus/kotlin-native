@@ -293,8 +293,9 @@ Task linkTest(String name, Closure<KonanLinkTest> configureClosure) {
                     extraOpts project.globalTestArgs
                 }
                 String libTaskName = "compileKonan${lib.capitalize()}${targetName.capitalize()}"
-                UtilsKt.setDistDependencyFor(project, libTaskName)
-                UtilsKt.setSameDependenciesAs(libTaskName, task as KonanLinkTest)
+                UtilsKt.dependsOnDist(project, libTaskName)
+                UtilsKt.sameDependenciesAs(libTaskName, task as KonanLinkTest)
+                task.dependsOn(libTaskName)
 
                 // Build an executable with library
                 program(name, targets: [targetName]) {
@@ -328,7 +329,7 @@ Task dynamicTest(String name, Closure<KonanDynamicTest> configureClosure) {
                     extraOpts task.flags
                     extraOpts project.globalTestArgs
                 }
-                UtilsKt.setDistDependencyFor(project, "compileKonan${name.capitalize()}${targetName.capitalize()}")
+                UtilsKt.dependsOnDist(project, "compileKonan${name.capitalize()}${targetName.capitalize()}")
             }
         }
     }
@@ -2595,10 +2596,11 @@ standaloneTest("mpp_default_args") {
 
 standaloneTest("mpp_optional_expectation") {
     source = "codegen/mpp/mpp_optional_expectation.kt"
-    def outputRoot = project.ext.testOutputLocal
+    def outputRoot = project.ext.testOutputLocal.toString()
+    def out = isWindows() ? outputRoot.replaceAll('\\', '/') : outputRoot
     flags = [
             '-Xmulti-platform',
-            "-Xcommon-sources=$outputRoot/$name/mpp_optional_expectation.kt"
+            "-Xcommon-sources=$out/$name/mpp_optional_expectation.kt"
     ]
 }
 
@@ -3121,7 +3123,6 @@ void createInterop(String name, Closure conf) {
     }
 }
 
-// Creates interop
 createInterop("sysstat") {
     // FIXME: creates empty file to workaround konan gradle plugin issue (should be able to have no def file)
     def f = File.createTempFile("sysstat.empty", ".def")
@@ -3198,8 +3199,9 @@ Task interopTest(String name, Closure<KonanInteropTest> configureClosure) {
             konanArtifacts {
                 def lib = task.interop
                 def libTask = "compileKonan${lib.capitalize()}${target.name.capitalize()}"
-                UtilsKt.setDistDependencyFor(project, libTask)
-                UtilsKt.setSameDependenciesAs(libTask, task as KonanInteropTest)
+                UtilsKt.dependsOnDist(project, libTask)
+                UtilsKt.sameDependenciesAs(libTask, task as KonanInteropTest)
+                task.dependsOn(libTask)
 
                 program(name, targets: [target.name]) {
                     libraries {
@@ -3629,7 +3631,7 @@ task buildKonanTests { t ->
 
     // Set build dependencies.
     dependsOn compileKonanLocalTest
-    UtilsKt.setDistDependencyFor(project, "compileKonanLocalTest${targetName.capitalize()}")
+    UtilsKt.dependsOnDist(project, "compileKonanLocalTest${targetName.capitalize()}")
 
     // Local tests build into a single binary should depend on this task
     project.tasks

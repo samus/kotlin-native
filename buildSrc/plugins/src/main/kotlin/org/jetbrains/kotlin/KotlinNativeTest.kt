@@ -89,7 +89,7 @@ abstract class KonanTest : DefaultTask() {
         if (useFilter && ::source.isInitialized) {
             arguments.add("--ktest_filter=${source.convertToPattern()}")
         }
-        project.setDistDependencyFor(this)
+        this.dependsOnDist()
         return this
     }
 
@@ -123,7 +123,9 @@ fun <T: KonanTest> Project.createTest(name: String, type: Class<T>, config: Clos
                 val target = project.testTarget
                 // If run task depends on something, compile task should also depend on this.
                 val compileTask = project.tasks.getByName("compileKonan${name.capitalize()}${target.name.capitalize()}")
-                compileTask.setSameDependenciesAs(this)
+                compileTask.sameDependenciesAs(this)
+                // Run task should depend on compile task
+                this.dependsOn(compileTask)
                 if (doBefore != null) compileTask.doFirst(doBefore!!)
                 compileTask.enabled = enabled
             }

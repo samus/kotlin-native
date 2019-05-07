@@ -75,41 +75,38 @@ fun Project.getFilesToCompile(compile: List<String>, exclude: List<String>): Lis
 
 //region Task dependency.
 
-fun Project.setDistDependencyFor(taskName: String) {
-    project.setDistDependencyFor(project.tasks.getByName(taskName))
+fun Project.dependsOnDist(taskName: String) {
+    project.tasks.getByName(taskName).dependsOnDist()
 }
 
-fun Project.setDistDependencyFor(t: Task) {
+fun Task.dependsOnDist() {
     val rootTasks = project.rootProject.tasks
     // We don't build the compiler if a custom dist path is specified.
     if (!(project.findProperty("useCustomDist") as Boolean)) {
-        t.dependsOn(rootTasks.getByName("dist"))
+        dependsOn(rootTasks.getByName("dist"))
         val target = project.testTarget
         if (target != HostManager.host) {
             // if a test_target property is set then tests should depend on a crossDist
             // otherwise runtime components would not be build for a target.
-            t.dependsOn(rootTasks.getByName("${target.name}CrossDist"))
+            dependsOn(rootTasks.getByName("${target.name}CrossDist"))
         }
     }
 }
 
 /**
- * @see setDistDependencyFor
+ * Sets the same dependencies for the receiver task from the given [task]
  */
-fun String.setSameDependenciesAs(task: Task) {
+fun String.sameDependenciesAs(task: Task) {
     val t = task.project.tasks.getByName(this)
-    t.setSameDependenciesAs(task)
+    t.sameDependenciesAs(task)
 }
 
 /**
  * Sets the same dependencies for the receiver task from the given [task]
- * and make [task] depend on receiver
  */
-fun Task.setSameDependenciesAs(task: Task) {
+fun Task.sameDependenciesAs(task: Task) {
     val dependencies = task.dependsOn.toList() // save to the list, otherwise it will cause cyclic dependency.
     this.dependsOn(dependencies)
-    // Run task should depend on compile task.
-    task.dependsOn(this)
 }
 
 //endregion
