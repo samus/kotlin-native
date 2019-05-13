@@ -224,9 +224,9 @@ void LLVMAddInstrProfPass(LLVMPassManagerRef passManagerRef, const char* outputF
     passManager->add(createInstrProfilingLegacyPass(options));
 }
 
-LLVMTargetLibraryInfoRef LLVMGetTargetLibraryInfo(LLVMModuleRef moduleRef) {
-    auto* libraryInfo = new TargetLibraryInfoImpl(Triple(unwrap(moduleRef)->getTargetTriple()));
-    return llvm::wrap(libraryInfo);
+void LLVMKotlinAddTargetLibraryInfoWrapperPass(LLVMPassManagerRef passManagerRef, const char* targetTriple) {
+  legacy::PassManagerBase *passManager = unwrap(passManagerRef);
+  passManager->add(new TargetLibraryInfoWrapperPass(Triple(targetTriple)));
 }
 
 void LLVMKotlinInitializeTargets() {

@@ -29,8 +29,7 @@ internal fun shouldRunLateBitcodePasses(context: Context): Boolean {
 
 internal fun runLateBitcodePasses(context: Context, llvmModule: LLVMModuleRef) {
     val passManager = LLVMCreatePassManager()!!
-    val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
-    LLVMAddTargetLibraryInfo(targetLibraryInfo, passManager)
+    LLVMKotlinAddTargetLibraryInfoWrapperPass(passManager, context.llvm.targetTriple)
     context.coverage.addLateLlvmPasses(passManager)
     LLVMRunPassManager(passManager, llvmModule)
     LLVMDisposePassManager(passManager)
@@ -129,8 +128,7 @@ internal fun runLlvmOptimizationPipeline(context: Context) {
                 config.relocMode,
                 config.codeModel)
 
-        val targetLibraryInfo = LLVMGetTargetLibraryInfo(llvmModule)
-        LLVMAddTargetLibraryInfo(targetLibraryInfo, modulePasses)
+        LLVMKotlinAddTargetLibraryInfoWrapperPass(modulePasses, config.targetTriple)
         // TargetTransformInfo pass.
         LLVMAddAnalysisPasses(targetMachine, modulePasses)
         // Since we are in a "closed world" internalization and global dce
