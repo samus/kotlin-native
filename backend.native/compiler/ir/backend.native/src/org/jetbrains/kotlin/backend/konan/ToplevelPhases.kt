@@ -1,6 +1,9 @@
 package org.jetbrains.kotlin.backend.konan
 
 import llvm.LLVMWriteBitcodeToFile
+import org.jetbrains.kotlin.backend.common.CheckDeclarationParentsVisitor
+import org.jetbrains.kotlin.backend.common.IrValidator
+import org.jetbrains.kotlin.backend.common.IrValidatorConfig
 import org.jetbrains.kotlin.backend.common.LoggingContext
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.phaser.*
@@ -28,6 +31,18 @@ import org.jetbrains.kotlin.konan.target.CompilerOutputKind
 import org.jetbrains.kotlin.psi2ir.Psi2IrConfiguration
 import org.jetbrains.kotlin.psi2ir.Psi2IrTranslator
 import java.util.Collections.emptySet
+
+
+internal fun validationCallback(context: Context, module: IrModuleFragment) {
+    val validatorConfig = IrValidatorConfig(
+        abortOnError = false,
+        ensureAllNodesAreDifferent = true,
+        checkTypes = true,
+        checkDescriptors = false
+    )
+    module.accept(IrValidator(context, validatorConfig), null)
+    module.accept(CheckDeclarationParentsVisitor, null)
+}
 
 internal fun konanUnitPhase(
         name: String,
@@ -247,8 +262,8 @@ internal val allLoweringsPhase = namedIrModulePhase(
                                 autoboxPhase then
                                 returnsInsertionPhase
                 ) then
-                checkDeclarationParentsPhase
-//                                                validateIrModulePhase // Temporarily disabled until moving to new IR finished.
+                checkDeclarationParentsPhase//,
+        //verify = ::validationCallback
 )
 
 internal val dependenciesLowerPhase = SameTypeNamedPhaseWrapper(

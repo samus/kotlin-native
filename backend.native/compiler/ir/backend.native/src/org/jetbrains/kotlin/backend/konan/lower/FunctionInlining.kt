@@ -398,7 +398,10 @@ internal class FunctionInlining(val context: Context) : IrElementTransformerVoid
                 val newVariable = currentScope.scope.createTemporaryVariableWithWrappedDescriptor(  // Create new variable and init it with the parameter expression.
                         irExpression = it.argumentExpression.transform(substitutor, data = null),   // Arguments may reference the previous ones - substitute them.
                         nameHint = callee.symbol.owner.name.toString(),
-                        isMutable = false)
+                        isMutable = false
+                ).also {
+                    if (parent != null) it.parent = parent
+                }
 
                 evaluationStatements.add(newVariable)
                 val getVal = IrGetValueImpl(

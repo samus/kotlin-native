@@ -79,7 +79,8 @@ internal val inlinePhase = namedIrModulePhase(
         name = "Inline",
         description = "Functions inlining",
         prerequisite = setOf(lowerBeforeInlinePhase),
-        nlevels = 0
+        nlevels = 0,
+        verify = ::validationCallback
 )
 
 internal val lowerAfterInlinePhase = makeKonanModuleOpPhase(
