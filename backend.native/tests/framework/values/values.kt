@@ -379,3 +379,5 @@ class GH2959 {
 
     fun getI(id: Int): List<I> = listOf(PrivateImpl(id))
 }
+
+abstract class MyAbstractList : List<Any?>
