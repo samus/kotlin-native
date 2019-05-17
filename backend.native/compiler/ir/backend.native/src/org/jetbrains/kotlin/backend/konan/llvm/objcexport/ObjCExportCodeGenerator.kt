@@ -880,7 +880,7 @@ private fun ObjCExportCodeGenerator.vtableIndex(irFunction: IrSimpleFunction): I
     return if (irClass.isInterface) {
         null
     } else {
-        context.getVtableBuilder(irClass).vtableIndex(irFunction)
+        context.getLayoutBuilder(irClass).vtableIndex(irFunction)
     }
 }
 
@@ -953,7 +953,7 @@ private fun ObjCExportCodeGenerator.createTypeAdapter(
     val vtableSize = if (irClass.kind == ClassKind.INTERFACE) {
         -1
     } else {
-        context.getVtableBuilder(irClass).vtableEntries.size
+        context.getLayoutBuilder(irClass).vtableEntries.size
     }
 
     val vtable = if (!irClass.isInterface && !irClass.typeInfoHasVtableAttached) {

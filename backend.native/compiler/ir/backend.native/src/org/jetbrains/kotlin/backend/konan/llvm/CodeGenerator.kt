@@ -9,7 +9,6 @@ package org.jetbrains.kotlin.backend.konan.llvm
 import kotlinx.cinterop.*
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.*
-import org.jetbrains.kotlin.backend.konan.descriptors.isInterface
 import org.jetbrains.kotlin.backend.konan.llvm.objc.*
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.declarations.*
@@ -722,7 +721,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
 
         val llvmMethod = if (!owner.isInterface) {
             // If this is a virtual method of the class - we can call via vtable.
-            val index = context.getVtableBuilder(owner).vtableIndex(anyMethod ?: irFunction)
+            val index = context.getLayoutBuilder(owner).vtableIndex(anyMethod ?: irFunction)
             val vtablePlace = gep(typeInfoPtr, Int32(1).llvm) // typeInfoPtr + 1
             val vtable = bitcast(kInt8PtrPtr, vtablePlace)
             val slot = gep(vtable, Int32(index).llvm)
