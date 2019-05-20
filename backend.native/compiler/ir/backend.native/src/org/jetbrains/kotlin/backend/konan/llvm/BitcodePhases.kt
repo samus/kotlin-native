@@ -8,7 +8,12 @@ package org.jetbrains.kotlin.backend.konan.llvm
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.*
 import org.jetbrains.kotlin.backend.konan.optimizations.*
-import org.jetbrains.kotlin.ir.visitors.acceptVoid
+import org.jetbrains.kotlin.ir.IrElement
+import org.jetbrains.kotlin.ir.IrStatement
+import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.util.*
+import org.jetbrains.kotlin.ir.visitors.*
+import org.jetbrains.kotlin.util.OperatorNameConventions
 
 internal val contextLLVMSetupPhase = makeKonanModuleOpPhase(
         name = "ContextLLVMSetup",
@@ -68,6 +73,103 @@ internal val devirtualizationPhase = makeKonanModuleOpPhase(
             context.devirtualizationAnalysisResult = Devirtualization.run(
                     irModule, context, context.moduleDFG!!, ExternalModulesDFG(emptyList(), emptyMap(), emptyMap(), emptyMap())
             )
+        }
+)
+
+internal val IrFunction.longName: String
+get() = ((this as? IrSimpleFunction)?.let { ((it.parent as? IrClass)?.name?.asString() ?: "<root>") + "." + it.name.asString() } ?: (this as? IrConstructor)?.parentAsClass?.name?.asString()?.plus(".<init>")).toString()
+
+internal val dcePhase = makeKonanModuleOpPhase(
+        name = "DCEPhase",
+        description = "Dead code elimination",
+        prerequisite = setOf(devirtualizationPhase),
+        op = { context, _ ->
+            val externalModulesDFG = ExternalModulesDFG(emptyList(), emptyMap(), emptyMap(), emptyMap())
+
+            val callGraph = CallGraphBuilder(
+                    context, context.moduleDFG!!,
+                    externalModulesDFG,
+                    context.devirtualizationAnalysisResult,
+                    true
+            ).build()
+            val referencedFunctions = mutableSetOf<IrFunction>()
+            for (node in callGraph.directEdges.values) {
+                if (!node.symbol.isGlobalInitializer)
+                    referencedFunctions.add(node.symbol.irFunction ?: error("No IR for: ${node.symbol}"))
+                node.callSites.forEach { referencedFunctions.add(it.actualCallee.irFunction ?: error("No IR for: ${it.actualCallee}")) }
+            }
+            val referencedClasses = mutableSetOf<IrClass>()
+
+            fun DataFlowIR.Type.resolved(): DataFlowIR.Type.Declared {
+                if (this is DataFlowIR.Type.Declared) return this
+                val hash = (this as DataFlowIR.Type.External).hash
+                return externalModulesDFG.publicTypes[hash] ?: error("Unable to resolve exported type $hash")
+            }
+
+            fun referenceType(type: DataFlowIR.Type.Declared) {
+                if (type.irClass == null)
+                    println("$type")
+                type.irClass?.let { referencedClasses += it }
+                type.superTypes.forEach {
+                    referenceType(it.resolved())
+                }
+            }
+
+            context.devirtualizationAnalysisResult!!.instantiatingClasses.forEach { referenceType(it) }
+
+            context.irModule!!.acceptChildrenVoid(object: IrElementVisitorVoid {
+                override fun visitElement(element: IrElement) {
+                    element.acceptChildrenVoid(this)
+                }
+
+                override fun visitFunction(declaration: IrFunction) {
+                    // TODO: Generalize somehow, not that graceful.
+                    if (declaration.name == OperatorNameConventions.INVOKE
+                            && declaration.parent.let { it is IrClass && it.defaultType.isFunction() }) {
+                        referencedFunctions.add(declaration)
+                    }
+                    if (declaration.parent.let { it is IrClass && it.isObjCClass() })
+                        referencedFunctions.add(declaration)
+                    super.visitFunction(declaration)
+                }
+
+                override fun visitConstructor(declaration: IrConstructor) {
+                    // TODO
+                    if (declaration.parentAsClass.name.asString() == InteropFqNames.nativePointedName && declaration.isPrimary)
+                        referencedFunctions.add(declaration)
+                    super.visitConstructor(declaration)
+                }
+            })
+
+            context.irModule!!.transformChildrenVoid(object: IrElementTransformerVoid() {
+                override fun visitFile(declaration: IrFile): IrFile {
+                    declaration.declarations.removeAll {
+                        (it is IrFunction && it.isReal && !referencedFunctions.contains(it))
+                    }
+                    return super.visitFile(declaration)
+                }
+
+                override fun visitClass(declaration: IrClass): IrStatement {
+                    if (declaration == context.ir.symbols.nativePointed)
+                        return super.visitClass(declaration)
+                    declaration.declarations.removeAll {
+                        (it is IrFunction && it.isReal && !referencedFunctions.contains(it))
+                    }
+                    return super.visitClass(declaration)
+                }
+
+                override fun visitProperty(declaration: IrProperty): IrStatement {
+                    if (declaration.getter.let { it != null && it.isReal && !referencedFunctions.contains(it) }) {
+                        declaration.getter = null
+                    }
+                    if (declaration.setter.let { it != null && it.isReal && !referencedFunctions.contains(it) }) {
+                        declaration.setter = null
+                    }
+                    return super.visitProperty(declaration)
+                }
+            })
+
+            context.referencedFunctions = referencedFunctions
         }
 )
 
