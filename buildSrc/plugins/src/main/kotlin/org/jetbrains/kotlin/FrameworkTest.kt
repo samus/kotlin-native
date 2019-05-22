@@ -6,6 +6,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Task
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecSpec
 
 import org.jetbrains.kotlin.konan.target.*
 
@@ -83,7 +84,7 @@ open class FrameworkTest : DefaultTask() {
         runTest(testExecutable)
     }
 
-    private fun runTest(testExecutable: Path) {
+    private fun setupTestEnvironment(): Map<String, String> {
         val target = project.testTarget()
         val platform = project.platformManager().platform(target)
         val configs = platform.configurables as AppleConfigurables
@@ -93,13 +94,18 @@ open class FrameworkTest : DefaultTask() {
             KonanTarget.MACOS_X64 -> "macosx"
             else -> throw IllegalStateException("Test target $target is not supported")
         }
-        val libraryPath = configs.absoluteTargetToolchain + "/usr/lib/swift/$swiftPlatform"
-        val executor = (project.convention.plugins["executor"] as? ExecutorService)
-                ?: throw RuntimeException("Executor wasn't found")
         // Hopefully, lexicographical comparison will work.
         val newMacos = System.getProperty("os.version").compareTo("10.14.4") >= 0
+        val libraryPath = configs.absoluteTargetToolchain + "/usr/lib/swift/$swiftPlatform"
+        return if (newMacos) emptyMap() else mapOf("DYLD_LIBRARY_PATH" to libraryPath)
+    }
+
+    private fun runTest(testExecutable: Path) {
+        val executor = (project.convention.plugins["executor"] as? ExecutorService)
+                ?: throw RuntimeException("Executor wasn't found")
+
         val (stdOut, stdErr, exitCode) = runProcess(
-                executor = executor.add(Action { it.environment = if (newMacos) emptyMap() else mapOf("DYLD_LIBRARY_PATH" to libraryPath) })::execute,
+                executor = executor.add(Action { it.environment = setupTestEnvironment() })::execute,
                 executable = testExecutable.toString())
 
         println("""
@@ -127,7 +133,13 @@ open class FrameworkTest : DefaultTask() {
                 options + "-o" + output.toString() + sources +
                 if (fullBitcode) listOf("-embed-bitcode", "-Xlinker", "-bitcode_verify") else listOf("-embed-bitcode-marker")
 
-        val (stdOut, stdErr, exitCode) = runProcess(executor = localExecutor(project), executable = compiler, args = args)
+        val executor = { a: Action<in ExecSpec> ->
+            project.exec {
+                it.environment = setupTestEnvironment()
+                a.execute(it)
+            }
+        }
+        val (stdOut, stdErr, exitCode) = runProcess(executor = executor, executable = compiler, args = args)
 
         println("""
             |$compiler finished with exit code: $exitCode
