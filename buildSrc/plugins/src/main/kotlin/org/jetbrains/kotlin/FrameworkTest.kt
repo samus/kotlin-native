@@ -97,7 +97,8 @@ open class FrameworkTest : DefaultTask() {
         // Hopefully, lexicographical comparison will work.
         val newMacos = System.getProperty("os.version").compareTo("10.14.4") >= 0
         val libraryPath = configs.absoluteTargetToolchain + "/usr/lib/swift/$swiftPlatform"
-        return if (newMacos) emptyMap() else mapOf("DYLD_LIBRARY_PATH" to libraryPath)
+
+        return if (newMacos) emptyMap() else mapOf("DYLD_LIBRARY_PATH" to libraryPath, "SIMCTL_DYLD_LIBRARY_PATH" to libraryPath)
     }
 
     private fun runTest(testExecutable: Path) {
@@ -109,6 +110,8 @@ open class FrameworkTest : DefaultTask() {
                 executable = testExecutable.toString())
 
         println("""
+            |$testExecutable
+            |exitCode: $exitCode
             |stdout: $stdOut
             |stderr: $stdErr
             """.trimMargin())
